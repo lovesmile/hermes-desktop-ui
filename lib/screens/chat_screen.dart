@@ -33,6 +33,28 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
   bool _loadingMessages = false;
   String _streamingContent = '';
+  bool _interrupted = false; // 被新消息中断的标志
+
+  // 是否正在思考（已发出请求但尚未收到任何 token）
+  bool get _isThinking => _sending && _streamingContent.isEmpty;
+
+  // 取消当前活跃的流式回复
+  void _cancelCurrentChat() {
+    // 取消所有活跃订阅
+    for (final entry in _streamSubscriptions.entries) {
+      entry.value.cancel();
+    }
+    _streamSubscriptions.clear();
+    _streamingBuffers.clear();
+    _streamingSessions.clear();
+    if (mounted) {
+      setState(() {
+        _streamingContent = '';
+        _sending = false;
+        _interrupted = true; // 标记为被中断
+      });
+    }
+  }
 
   // ★ 并行流式支持：每个会话独立 buffer 和 subscription
   final Map<String, String> _streamingBuffers = {};
@@ -342,14 +364,23 @@ class _ChatScreenState extends State<ChatScreen> {
       _activeSession = null;
       _messages = [];
       _streamingContent = '';
+      _interrupted = false;
     });
   }
 
   Future<void> _sendMessage() async {
     final text = _inputController.text.trim();
-    if (text.isEmpty || _sending) return;
+    if (text.isEmpty || (_sending && !text.startsWith('/'))) return;
 
     _inputController.clear();
+
+    // ★ 如果正在回复中，先中断当前回复
+    bool wasReplying = _sending;
+    if (_sending) {
+      _cancelCurrentChat();
+    }
+    // 清除之前的中断标记（新消息开始）
+    _interrupted = false;
 
     // ★ 记录发消息时的会话 ID
     final sessionIdAtSend = _activeSession?.id;
@@ -701,11 +732,37 @@ class _ChatScreenState extends State<ChatScreen> {
                               );
                             }
                             // Streaming content at bottom
-                            return ChatMessageWidget(
-                              content: _streamingContent,
-                              isUser: false,
-                              timestamp: DateTime.now(),
-                            );
+                            if (_interrupted) {
+                              // 被中断的回复：显示一条提示消息
+                              return Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.cancel_outlined,
+                                        size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                    SizedBox(width: 6),
+                                    Text('已中断',
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                            fontStyle: FontStyle.italic)),
+                                  ],
+                                ),
+                              );
+                            }
+                            if (_isThinking) {
+                              // AI 正在思考中：显示动画指示器
+                              return _buildThinkingIndicator();
+                            }
+                            if (_streamingContent.isNotEmpty) {
+                              // AI 正在流式输出
+                              return ChatMessageWidget(
+                                content: _streamingContent,
+                                isUser: false,
+                                timestamp: DateTime.now(),
+                              );
+                            }
+                            return SizedBox.shrink();
                           },
                         ),
                 ),
@@ -750,29 +807,33 @@ class _ChatScreenState extends State<ChatScreen> {
                           const SizedBox(width: 8),
                           AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
-                            child: IconButton(
-                              onPressed:
-                                  (_sending || _loadingMessages)
-                                      ? null
-                                      : _sendMessage,
-                              icon: _sending
-                                  ? SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: AppTheme.primary,
+                            child: _sending
+                                ? IconButton(
+                                    onPressed: _cancelCurrentChat,
+                                    icon: const Icon(Icons.stop_rounded),
+                                    tooltip: '停止回复',
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: AppTheme.error,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
                                       ),
-                                    )
-                                  : const Icon(Icons.send_rounded),
-                              style: IconButton.styleFrom(
-                                backgroundColor: AppTheme.primary,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                            ),
+                                    ),
+                                  )
+                                : IconButton(
+                                    onPressed:
+                                        (_loadingMessages)
+                                            ? null
+                                            : _sendMessage,
+                                    icon: const Icon(Icons.send_rounded),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: AppTheme.primary,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  ),
                           ),
                         ],
                       ),
@@ -946,6 +1007,45 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // 「正在思考」状态指示器 — 脉冲动画
+  Widget _buildThinkingIndicator() {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // AI 头像
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: AppTheme.primary.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(Icons.auto_awesome, size: 16, color: AppTheme.primary),
+          ),
+          SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Hermes',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: cs.onSurfaceVariant)),
+                SizedBox(height: 6),
+                // 脉冲点动画
+                _AnimatedDots(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmptyChat() {
     return Center(
       child: Column(
@@ -985,6 +1085,62 @@ class _Message {
     this.isError = false,
     this.toolCalls,
   });
+}
+
+/// 脉冲点动画 — 表示 AI 正在思考
+class _AnimatedDots extends StatefulWidget {
+  @override
+  State<_AnimatedDots> createState() => _AnimatedDotsState();
+}
+
+class _AnimatedDotsState extends State<_AnimatedDots>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            final delay = i * 0.2; // 每个点错开 0.2s
+            // 用正弦波计算透明度: 在 0.3~1.0 之间脉冲
+            final t = (_controller.value + delay) % 1.0;
+            final opacity = 0.3 + 0.7 * (1.0 - (t * 2 - 1).abs());
+            return Padding(
+              padding: EdgeInsets.only(right: i < 2 ? 4 : 0),
+              child: Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: opacity),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
 }
 
 class _SessionItem extends StatelessWidget {
