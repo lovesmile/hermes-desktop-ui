@@ -6,9 +6,8 @@ import 'screens/chat_screen.dart';
 import 'screens/platforms_screen.dart';
 import 'screens/cron_screen.dart';
 import 'screens/logs_screen.dart';
-import 'screens/settings_screen.dart';
 import 'screens/models_screen.dart';
-import 'widgets/sidebar.dart';
+import 'screens/settings_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,9 +36,7 @@ class _HermesDesktopAppState extends State<HermesDesktopApp> {
     super.dispose();
   }
 
-  void _onThemeChanged() {
-    setState(() {});
-  }
+  void _onThemeChanged() => setState(() {});
 
   @override
   Widget build(BuildContext context) {
@@ -63,58 +60,86 @@ class MainShell extends StatefulWidget {
 
 class MainShellState extends State<MainShell> {
   int _currentIndex = 0;
-  bool _sidebarCollapsed = false;
 
-  static const _titles = [
-    '仪表盘',
-    '聊天',
-    '平台管理',
-    '定时任务',
-    '日志查看',
-    '模型与技能',
-    '设置',
+  static const _navItems = [
+    (Icons.dashboard_outlined, Icons.dashboard, '仪表盘'),
+    (Icons.chat_outlined, Icons.chat, '聊天'),
+    (Icons.devices_outlined, Icons.devices, '平台'),
+    (Icons.schedule_outlined, Icons.schedule, '定时'),
+    (Icons.article_outlined, Icons.article, '日志'),
+    (Icons.memory_outlined, Icons.memory, '模型'),
+    (Icons.settings_outlined, Icons.settings, '设置'),
   ];
 
-  void navigateTo(int index) {
-    setState(() => _currentIndex = index);
-  }
-
-  void _onItemSelected(int index) {
-    setState(() => _currentIndex = index);
-  }
+  void navigateTo(int index) => setState(() => _currentIndex = index);
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Scaffold(
-      body: Row(
-        children: [
-          Sidebar(
-            currentIndex: _currentIndex,
-            collapsed: _sidebarCollapsed,
-            onItemSelected: _onItemSelected,
-            onToggleCollapse: () =>
-                setState(() => _sidebarCollapsed = !_sidebarCollapsed),
-          ),
-          Expanded(
-            child: IndexedStack(
-              index: _currentIndex,
-              children: [
-                DashboardScreen(onNavigate: navigateTo),
-                const ChatScreen(),
-                const PlatformsScreen(),
-                const CronScreen(),
-                const LogsScreen(),
-                const ModelsScreen(),
-                const SettingsScreen(),
-              ],
+      body: SafeArea(
+        child: Row(
+          children: [
+            // M3 NavigationRail
+            NavigationRail(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: (i) => navigateTo(i),
+              labelType: NavigationRailLabelType.all,
+              groupAlignment: -0.5,
+              backgroundColor: scheme.surface,
+              indicatorColor: scheme.secondaryContainer,
+              leading: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6750A4), Color(0xFFD0BCFF)],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Center(
+                        child: Text('H',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 20)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              destinations: _navItems.map((item) {
+                return NavigationRailDestination(
+                  icon: Icon(item.$1),
+                  selectedIcon: Icon(item.$2, color: scheme.primary),
+                  label: Text(item.$3),
+                );
+              }).toList(),
             ),
-          ),
-        ],
+            // Separator
+            VerticalDivider(width: 1, color: scheme.outlineVariant),
+            Expanded(
+              child: IndexedStack(
+                index: _currentIndex,
+                children: [
+                  DashboardScreen(onNavigate: navigateTo),
+                  const ChatScreen(),
+                  const PlatformsScreen(),
+                  const CronScreen(),
+                  const LogsScreen(),
+                  const ModelsScreen(),
+                  const SettingsScreen(),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
-  }
-
-  Widget _buildScreen(int index) {
-    return const SizedBox.shrink();
   }
 }

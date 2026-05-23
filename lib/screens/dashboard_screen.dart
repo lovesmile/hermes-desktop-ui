@@ -179,7 +179,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             icon: Icons.settings_outlined,
                             value: '设置',
                             label: '设置 → 配置',
-                            color: Colors.white38,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
                             onTap: () => widget.onNavigate?.call(6),
                           ),
                         ),
@@ -252,7 +252,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   'localhost:8642',
                                   style: TextStyle(
                                     fontFamily: 'monospace',
-                                    color: AppTheme.textSecondary,
+                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                                   ),
                                 ),
                               ],
@@ -262,7 +262,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               '需在 ~/.hermes/.env 中设置 API_SERVER_ENABLED=true',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: AppTheme.textSecondary,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
                               ),
                             ),
                           ],
@@ -320,14 +320,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             width: 120,
             child: Text(label,
                 style: TextStyle(
-                    fontSize: 13, color: AppTheme.textSecondary)),
+                    fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
           ),
           Expanded(
             child: Text(value,
                 style: TextStyle(
                   fontSize: 13,
                   fontFamily: 'monospace',
-                  color: AppTheme.textPrimary,
+                  color: Theme.of(context).colorScheme.onSurface,
                 )),
           ),
         ],

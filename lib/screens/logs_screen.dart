@@ -73,7 +73,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
       case 'INFO':
         return AppTheme.info;
       case 'DEBUG':
-        return Colors.white38;
+        return Theme.of(context).colorScheme.onSurfaceVariant;
       default:
         return Colors.white54;
     }
@@ -83,7 +83,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('日志'),
+        title: Text('日志'),
         bottom: TabBar(
           controller: _tabController,
           tabs: _tabs.map((t) => Tab(text: t)).toList(),
@@ -96,21 +96,21 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
         children: [
           // Filter bar
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFF0A0A1A),
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
               border: Border(
                 bottom:
-                    BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+                    BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
               ),
             ),
             child: Row(
               children: [
                 // Level chips
                 ..._levels.map((l) => Padding(
-                      padding: const EdgeInsets.only(right: 6),
+                      padding: EdgeInsets.only(right: 6),
                       child: ChoiceChip(
-                        label: Text(l, style: const TextStyle(fontSize: 11)),
+                        label: Text(l, style: TextStyle(fontSize: 11)),
                         selected: _selectedLevel == l ||
                             (l == 'ALL' && _selectedLevel.isEmpty),
                         onSelected: (_) {
@@ -120,7 +120,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                           _loadLogs();
                         },
                         selectedColor: AppTheme.primary.withValues(alpha: 0.3),
-                        backgroundColor: Colors.white.withValues(alpha: 0.05),
+                        backgroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
                         labelStyle: TextStyle(
                           fontSize: 11,
                           color: _selectedLevel == l ||
@@ -148,24 +148,24 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                     onSubmitted: (_) => _loadLogs(),
                   ),
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: 8),
                 // Refresh
                 IconButton(
-                  icon: const Icon(Icons.refresh, size: 20),
+                  icon: Icon(Icons.refresh, size: 20),
                   onPressed: _loadLogs,
                   tooltip: '刷新',
                 ),
-                const SizedBox(width: 4),
+                SizedBox(width: 4),
                 // Clear display
                 IconButton(
-                  icon: const Icon(Icons.clear_all, size: 20),
+                  icon: Icon(Icons.clear_all, size: 20),
                   onPressed: () {
                     setState(() => _allLogs = []);
                   },
                   tooltip: '清空显示',
-                  color: Colors.white38,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 4),
+                SizedBox(width: 4),
                 // Auto-scroll toggle
                 IconButton(
                   icon: Icon(
@@ -174,7 +174,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                   ),
                   onPressed: () => setState(() => _autoScroll = !_autoScroll),
                   tooltip: _autoScroll ? '自动滚动: 开' : '自动滚动: 关',
-                  color: _autoScroll ? AppTheme.primary : Colors.white38,
+                  color: _autoScroll ? AppTheme.primary : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ],
             ),
@@ -182,7 +182,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
           // Log list
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? Center(child: CircularProgressIndicator())
                 : _allLogs.isEmpty
                     ? Center(
                         child: Column(
@@ -190,10 +190,10 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                           children: [
                             Icon(Icons.article_outlined,
                                 size: 48,
-                                color: Colors.white.withValues(alpha: 0.15)),
-                            const SizedBox(height: 12),
-                            const Text('暂无日志',
-                                style: TextStyle(color: Colors.white38)),
+                                color: Theme.of(context).colorScheme.onSurfaceVariant),
+                            SizedBox(height: 12),
+                            Text('暂无日志',
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                           ],
                         ),
                       )
@@ -214,7 +214,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
 
   Widget _buildLogEntry(LogEntry log) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -226,7 +226,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'monospace',
-                color: Colors.white.withValues(alpha: 0.35),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
           ),
@@ -249,15 +249,15 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: 8),
           // Message
           Expanded(
             child: Text(
               log.message,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
                 fontFamily: 'monospace',
-                color: Colors.white70,
+                color: Theme.of(context).colorScheme.onSurface,
                 height: 1.4,
               ),
             ),

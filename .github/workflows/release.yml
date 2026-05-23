@@ -3,7 +3,7 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'  # 推送 v1.0.0, v2.0.0 等标签时触发
+      - 'v*'
 
 jobs:
   build-windows:
@@ -24,61 +24,38 @@ jobs:
         run: flutter build windows --release
 
       - name: Package installer
+        shell: pwsh
         run: |
-          mkdir hermes-desktop-ui
-          copy build\windows\x64\runner\Release\hermes_desktop.exe hermes-desktop-ui\
-          xcopy /E /I assets hermes-desktop-ui\assets\
-          copy README.md hermes-desktop-ui\
-          copy SKILL.md hermes-desktop-ui\
+          New-Item -ItemType Directory -Force -Path hermes-desktop-ui
+          Copy-Item "build\windows\x64\runner\Release\hermes_desktop.exe" -Destination "hermes-desktop-ui\"
+          Copy-Item "README.md" -Destination "hermes-desktop-ui\"
+          Copy-Item "SKILL.md" -Destination "hermes-desktop-ui\"
+          if (Test-Path "assets") {
+            Copy-Item -Recurse "assets" -Destination "hermes-desktop-ui\"
+          }
+          Compress-Archive -Path "hermes-desktop-ui\*" -DestinationPath "hermes-desktop-ui-windows-${{ github.ref_name }}.zip"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hermes-desktop-ui-windows
-          path: hermes-desktop-ui/
-
-  create-release:
-    needs: build-windows
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Windows build
-        uses: actions/download-artifact@v4
-        with:
-          name: hermes-desktop-ui-windows
-          path: hermes-desktop-ui/
-
-      - name: Create ZIP
-        run: |
-          cd hermes-desktop-ui
-          zip -r ../hermes-desktop-ui-windows-${{ github.ref_name }}.zip .
-          cd ..
-
-      - name: Generate release notes
-        run: |
-          echo "# Hermes Desktop UI ${{ github.ref_name }}" > release_notes.md
-          echo "" >> release_notes.md
-          echo "## 下载" >> release_notes.md
-          echo "- [Windows exe 压缩包](hermes-desktop-ui-windows-${{ github.ref_name }}.zip)" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## 使用方法" >> release_notes.md
-          echo "1. 解压后双击 \`hermes_desktop.exe\` 运行" >> release_notes.md
-          echo "2. 确保 Hermes Agent 已安装并在运行" >> release_notes.md
-          echo "3. 在设置页配置你的 Gateway 地址（默认 http://localhost:8642）" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## 从源码构建" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "flutter pub get" >> release_notes.md
-          echo "flutter build windows --release" >> release_notes.md
-          echo '```' >> release_notes.md
-
-      - name: Create Release
+      - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
           files: hermes-desktop-ui-windows-${{ github.ref_name }}.zip
-          body_path: release_notes.md
+          body: |
+            # Hermes Desktop UI ${{ github.ref_name }}
+
+            ## 下载
+            - [Windows 版](hermes-desktop-ui-windows-${{ github.ref_name }}.zip)
+
+            ## 使用方法
+            1. 解压后双击 `hermes_desktop.exe` 运行
+            2. 确保 Hermes Agent 已安装并运行（`hermes gateway run`）
+            3. 首次使用在设置页配置 Gateway 地址（默认 `http://localhost:8642`）
+
+            ## 从源码构建
+            ```bash
+            git clone https://github.com/lovesmile/hermes-desktop-ui.git
+            cd hermes-desktop-ui
+            flutter pub get
+            flutter build windows --release
+            ```
           draft: false
           prerelease: false

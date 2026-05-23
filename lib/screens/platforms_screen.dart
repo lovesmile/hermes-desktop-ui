@@ -44,7 +44,7 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppTheme.surface,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -154,7 +154,7 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
                     decoration: BoxDecoration(
                       color: (platform.configured
                               ? AppTheme.success
-                              : Colors.white38)
+                              : Theme.of(context).colorScheme.onSurfaceVariant)
                           .withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -164,7 +164,7 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
                         fontSize: 12,
                         color: platform.configured
                             ? AppTheme.success
-                            : Colors.white38,
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -268,14 +268,14 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('  •  ', style: TextStyle(color: AppTheme.primary)),
-                    Expanded(child: Text(line.substring(2), style: const TextStyle(fontSize: 13, height: 1.5, color: Colors.white70))),
+                    Expanded(child: Text(line.substring(2), style: TextStyle(fontSize: 13, height: 1.5, color: Theme.of(context).colorScheme.onSurface))),
                   ],
                 ),
               );
             }
             return Padding(
               padding: const EdgeInsets.only(bottom: 4),
-              child: Text(line, style: const TextStyle(fontSize: 13, height: 1.5, color: Colors.white70)),
+              child: Text(line, style: TextStyle(fontSize: 13, height: 1.5, color: Theme.of(context).colorScheme.onSurface)),
             );
           })
           .toList(),
@@ -549,7 +549,7 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
                 decoration: BoxDecoration(
                   color: (widget.platform.configured
                           ? AppTheme.success
-                          : Colors.white38)
+                          : Theme.of(context).colorScheme.onSurfaceVariant)
                       .withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(16),
                 ),
@@ -558,7 +558,7 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
                   style: TextStyle(
                     color: widget.platform.configured
                         ? AppTheme.success
-                        : Colors.white38,
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
                     fontSize: 13,
                   ),
                 ),

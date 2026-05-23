@@ -119,7 +119,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                           if (_modelConfig.isEmpty)
                             Text('未读取到模型配置',
                                 style: TextStyle(
-                                    color: AppTheme.textSecondary))
+                                    color: Theme.of(context).colorScheme.onSurfaceVariant))
                           else
                           ..._modelConfig.entries.map((e) => _configRow(
                               e.key, e.value)),
@@ -139,7 +139,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                               const SizedBox(width: 8),
                               Text(
                                 '修改 ~/.hermes/config.yaml 中的 model.default 和 model.provider',
-                                style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
                               ),
                             ],
                           ),
@@ -175,7 +175,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                                   snapshot.data!.isEmpty) {
                                 return Text('无环境变量',
                                     style: TextStyle(
-                                        color: AppTheme.textSecondary));
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant));
                               }
                               return Column(
                                 children: snapshot.data!.entries.map((e) {
@@ -223,11 +223,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
                             children: [
                               Icon(Icons.auto_awesome_outlined,
                                   size: 48,
-                                  color: Colors.white.withValues(alpha: 0.15)),
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant),
                               const SizedBox(height: 12),
                               Text('未找到技能',
                                   style: TextStyle(
-                                      color: AppTheme.textSecondary)),
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
                             ],
                           ),
                         ),
@@ -276,7 +276,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
                                               fontSize: 12,
-                                              color: AppTheme.textSecondary,
+                                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                                             ),
                                           ),
                                         ),
@@ -297,7 +297,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                                       'v${skill['version']}',
                                       style: TextStyle(
                                         fontSize: 11,
-                                        color: AppTheme.textSecondary,
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                                         fontFamily: 'monospace',
                                       ),
                                     ),
@@ -337,7 +337,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Provider:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              Text('Provider:', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
                 value: providerCtrl.text,
@@ -348,7 +348,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                 },
               ),
               const SizedBox(height: 12),
-              Text('模型:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              Text('模型:', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
               const SizedBox(height: 6),
               TextField(
                 controller: modelCtrl,
@@ -359,7 +359,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              Text('Base URL:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              Text('Base URL:', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
               const SizedBox(height: 6),
               TextField(
                 controller: baseUrlCtrl,
@@ -370,7 +370,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              Text('API Key:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              Text('API Key:', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
               const SizedBox(height: 6),
               TextField(
                 controller: apiKeyCtrl,
@@ -473,7 +473,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
               key,
               style: TextStyle(
                 fontSize: 13,
-                color: AppTheme.textSecondary,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
           ),
@@ -483,7 +483,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
               style: TextStyle(
                 fontSize: 13,
                 fontFamily: 'monospace',
-                color: AppTheme.textPrimary,
+                color: Theme.of(context).colorScheme.onSurface,
               ),
             ),
           ),

@@ -1,219 +1,233 @@
 import 'package:flutter/material.dart';
 
+/// Material Design 3 theme for Hermes Desktop UI
+/// References: https://m3.material.io/
 class AppTheme {
-  // 颜色常量 — 亮一点，低对比时更清晰
-  static const Color _primaryColor = Color(0xFF7C4DFF);
-  static const Color _secondaryColor = Color(0xFF00BCD4);
-  static const Color _surfaceColor = Color(0xFF1E1E2E);
-  static const Color _backgroundColor = Color(0xFF282840);
-  static const Color _cardColor = Color(0xFF363652);
-  static const Color _navColor = Color(0xFF1A1A2E);
-  static const Color _success = Color(0xFF66BB6A);
-  static const Color _warning = Color(0xFFFFCA28);
-  static const Color _error = Color(0xFFEF5350);
-  static const Color _info = Color(0xFF42A5F5);
-  static const Color _textPrimary = Color(0xFFF0F0FF);
-  static const Color _textSecondary = Color(0xFFB0B0C0);
+  // ── Seed colors ──────────────────────────────────────────────
+  static const Color _seedColor = Color(0xFF6750A4); // M3 default seed
+  static const Color _errorColor = Color(0xFFB3261E);
 
-  static ThemeData get darkTheme {
-    return ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.dark,
-      colorScheme: const ColorScheme.dark(
-        primary: _primaryColor,
-        secondary: _secondaryColor,
-        surface: _surfaceColor,
-        error: _error,
-        onPrimary: Colors.white,
-        onSecondary: Colors.black,
-        onSurface: _textPrimary,
-      ),
-      scaffoldBackgroundColor: _backgroundColor,
-      appBarTheme: const AppBarTheme(
-        backgroundColor: _navColor,
-        elevation: 0,
-        centerTitle: false,
-        titleTextStyle: TextStyle(
-          color: _textPrimary,
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
-        ),
-        iconTheme: IconThemeData(color: _textSecondary),
-      ),
-      cardTheme: CardThemeData(
-        color: _cardColor,
-        elevation: 3,
-        shadowColor: Colors.black38,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
-        ),
-      ),
-      navigationRailTheme: NavigationRailThemeData(
-        backgroundColor: _navColor,
-        indicatorColor: _primaryColor.withValues(alpha: 0.35),
-        selectedLabelTextStyle: const TextStyle(
-            fontSize: 12, color: _primaryColor, fontWeight: FontWeight.w600),
-        unselectedLabelTextStyle:
-            const TextStyle(fontSize: 12, color: _textSecondary),
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: _cardColor,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: _primaryColor, width: 2),
-        ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        hintStyle: const TextStyle(color: _textSecondary),
-        labelStyle: const TextStyle(color: _textSecondary),
-      ),
-      chipTheme: ChipThemeData(
-        backgroundColor: _cardColor,
-        selectedColor: _primaryColor.withValues(alpha: 0.3),
-        labelStyle: const TextStyle(fontSize: 12, color: _textPrimary),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
-        ),
-      ),
-      dividerTheme:
-          DividerThemeData(color: Colors.white.withValues(alpha: 0.08)),
-      snackBarTheme: SnackBarThemeData(
-        backgroundColor: _cardColor,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      ),
-      dialogTheme: DialogThemeData(
-        backgroundColor: _surfaceColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      ),
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: _primaryColor,
-        foregroundColor: Colors.white,
-      ),
-      textTheme: const TextTheme(
-        headlineLarge: TextStyle(
-            color: _textPrimary,
-            fontWeight: FontWeight.bold,
-            fontSize: 28),
-        headlineMedium: TextStyle(
-            color: _textPrimary, fontWeight: FontWeight.w600, fontSize: 22),
-        titleLarge: TextStyle(
-            color: _textPrimary, fontWeight: FontWeight.w600, fontSize: 18),
-        titleMedium: TextStyle(
-            color: _textPrimary, fontWeight: FontWeight.w500, fontSize: 16),
-        bodyLarge: TextStyle(color: _textPrimary, fontSize: 15),
-        bodyMedium: TextStyle(color: _textSecondary, fontSize: 14),
-        bodySmall: TextStyle(color: _textSecondary, fontSize: 12),
-      ),
-      scrollbarTheme: ScrollbarThemeData(
-        thumbColor: WidgetStateProperty.all(Colors.white30),
-        thickness: WidgetStateProperty.all(6),
-        radius: const Radius.circular(3),
-      ),
-      progressIndicatorTheme:
-          const ProgressIndicatorThemeData(color: _primaryColor),
-      switchTheme: SwitchThemeData(
-        thumbColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) return _primaryColor;
-          return Colors.white54;
-        }),
-        trackColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return _primaryColor.withValues(alpha: 0.4);
-          }
-          return Colors.white24;
-        }),
-      ),
+  // ── Dynamic color scheme from seed ────────────────────────────
+  static ColorScheme _lightScheme() => ColorScheme.fromSeed(
+        seedColor: _seedColor,
+        brightness: Brightness.light,
+        error: _errorColor,
+      );
+
+  static ColorScheme _darkScheme() => ColorScheme.fromSeed(
+        seedColor: _seedColor,
+        brightness: Brightness.dark,
+        error: _errorColor,
+      );
+
+  // ── Shape scheme (M3 levels) ─────────────────────────────────
+  static const ShapeBorder cardShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.all(Radius.circular(12)),
+  );
+  static const ShapeBorder dialogShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.all(Radius.circular(28)),
+  );
+  static const ShapeBorder chipShape = StadiumBorder();
+  static const ShapeBorder buttonShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.all(Radius.circular(20)),
+  );
+
+  // ── Convenient color accessors (backward compat) ──────────────
+  static Color get primary => _seedColor;
+  static Color get secondary => const Color(0xFF625B71);
+  static Color get tertiary => const Color(0xFF7D5260);
+  static Color get error => _errorColor;
+  static Color get surface => const Color(0xFFFFFBFE);
+  static Color get surfaceDark => const Color(0xFF1C1B1F);
+  static Color get card => const Color(0xFFF3EDF7);
+
+  static Color get success => const Color(0xFF4CAF50);
+  static Color get warning => const Color(0xFFFFA726);
+  static Color get info => const Color(0xFF42A5F5);
+
+  static Color get primaryContainer => const Color(0xFFEADDFF);
+  static Color get secondaryContainer => const Color(0xFFE8DEF8);
+  static Color get tertiaryContainer => const Color(0xFFFFD8E4);
+
+  // ── Typography (M3 type scale) ───────────────────────────────
+  static TextTheme _textTheme(Brightness brightness) {
+    return TextTheme(
+      // Display
+      displayLarge: _textStyle(brightness, 57, FontWeight.w400, -0.25),
+      displayMedium: _textStyle(brightness, 45, FontWeight.w400, 0),
+      displaySmall: _textStyle(brightness, 36, FontWeight.w400, 0),
+      // Headline
+      headlineLarge: _textStyle(brightness, 32, FontWeight.w400, 0),
+      headlineMedium: _textStyle(brightness, 28, FontWeight.w400, 0),
+      headlineSmall: _textStyle(brightness, 24, FontWeight.w400, 0),
+      // Title
+      titleLarge: _textStyle(brightness, 22, FontWeight.w500, 0),
+      titleMedium: _textStyle(brightness, 16, FontWeight.w500, 0.15),
+      titleSmall: _textStyle(brightness, 14, FontWeight.w500, 0.1),
+      // Body
+      bodyLarge: _textStyle(brightness, 16, FontWeight.w400, 0.5),
+      bodyMedium: _textStyle(brightness, 14, FontWeight.w400, 0.25),
+      bodySmall: _textStyle(brightness, 12, FontWeight.w400, 0.4),
+      // Label
+      labelLarge: _textStyle(brightness, 14, FontWeight.w500, 0.1),
+      labelMedium: _textStyle(brightness, 12, FontWeight.w500, 0.5),
+      labelSmall: _textStyle(brightness, 11, FontWeight.w500, 0.5),
     );
   }
 
-  // 工具颜色
-  static Color get success => _success;
-  static Color get warning => _warning;
-  static Color get error => _error;
-  static Color get info => _info;
-  static Color get primary => _primaryColor;
-  static Color get secondary => _secondaryColor;
-  static Color get surface => _surfaceColor;
-  static Color get card => _cardColor;
-  static Color get textPrimary => _textPrimary;
-  static Color get textSecondary => _textSecondary;
+  static TextStyle _textStyle(Brightness brightness, double size,
+      FontWeight weight, double letterSpacing) {
+    final isDark = brightness == Brightness.dark;
+    return TextStyle(
+      fontSize: size,
+      fontWeight: weight,
+      letterSpacing: letterSpacing,
+      color: isDark ? Colors.white : const Color(0xFF1C1B1F),
+    );
+  }
 
-  /// 浅色主题
+  // ── M3 Dark Theme ────────────────────────────────────────────
+  static ThemeData get darkTheme {
+    final colorScheme = _darkScheme();
+    return _buildTheme(colorScheme, Brightness.dark);
+  }
+
+  // ── M3 Light Theme ───────────────────────────────────────────
   static ThemeData get lightTheme {
+    final colorScheme = _lightScheme();
+    return _buildTheme(colorScheme, Brightness.light);
+  }
+
+  // ── Build theme from scheme ──────────────────────────────────
+  static ThemeData _buildTheme(ColorScheme scheme, Brightness brightness) {
+    final isDark = brightness == Brightness.dark;
+
     return ThemeData(
       useMaterial3: true,
-      brightness: Brightness.light,
-      colorScheme: const ColorScheme.light(
-        primary: _primaryColor,
-        secondary: _secondaryColor,
-        surface: Color(0xFFF5F5F5),
-        error: _error,
-        onPrimary: Colors.white,
-        onSecondary: Colors.black,
-        onSurface: Colors.black87,
-      ),
-      scaffoldBackgroundColor: const Color(0xFFF0F0F0),
+      brightness: brightness,
+      colorScheme: scheme,
+
+      // ── Shape ──────────────────────────────────────────────────
       cardTheme: CardThemeData(
-        color: Colors.white,
-        elevation: 2,
+        elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+          side: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.5),
+          ),
         ),
+        clipBehavior: Clip.antiAlias,
+        color: scheme.surfaceContainerLow,
       ),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        centerTitle: false,
-        foregroundColor: Colors.black87,
-        titleTextStyle: TextStyle(
-          color: Colors.black87,
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
+      dialogTheme: DialogThemeData(
+        backgroundColor: scheme.surfaceContainerHigh,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(28),
         ),
+        elevation: 3,
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: scheme.surfaceContainerHigh,
+        selectedColor: scheme.secondaryContainer,
+        disabledColor: scheme.surfaceContainerLow,
+        labelStyle: TextStyle(
+          fontSize: 12,
+          color: scheme.onSurface,
+          fontWeight: FontWeight.w500,
+        ),
+        secondaryLabelStyle: TextStyle(
+          fontSize: 12,
+          color: scheme.onSurfaceVariant,
+        ),
+        shape: StadiumBorder(
+          side: BorderSide(color: scheme.outline),
+        ),
+        side: BorderSide(color: scheme.outline),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.white,
+        fillColor: scheme.surfaceContainerHighest,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.12)),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: scheme.outline),
         ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: scheme.outline),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: scheme.primary, width: 2),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        hintStyle: TextStyle(color: scheme.onSurfaceVariant),
+        labelStyle: TextStyle(color: scheme.onSurfaceVariant),
       ),
-      textTheme: const TextTheme(
-        bodyLarge: TextStyle(color: Colors.black87, fontSize: 15),
-        bodyMedium: TextStyle(color: Colors.black54, fontSize: 14),
-        bodySmall: TextStyle(color: Colors.black45, fontSize: 12),
+      navigationRailTheme: NavigationRailThemeData(
+        backgroundColor: scheme.surface,
+        indicatorColor: scheme.secondaryContainer,
+        labelType: NavigationRailLabelType.all,
+        minWidth: 80,
+        groupAlignment: -0.5,
       ),
-      dialogTheme: const DialogThemeData(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: scheme.inverseSurface,
+        contentTextStyle: TextStyle(color: scheme.onInverseSurface),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
+      dividerTheme: DividerThemeData(
+        color: scheme.outlineVariant.withValues(alpha: 0.4),
+        thickness: 1,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return scheme.primary;
+          return scheme.onSurfaceVariant;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return scheme.primaryContainer;
+          }
+          return scheme.surfaceContainerHighest;
+        }),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: scheme.primaryContainer,
+        foregroundColor: scheme.onPrimaryContainer,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 3,
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: scheme.primary,
+        linearTrackColor: scheme.surfaceContainerHighest,
+      ),
+      scaffoldBackgroundColor: scheme.surface,
+      appBarTheme: AppBarTheme(
+        backgroundColor: scheme.surface,
+        elevation: 0,
+        centerTitle: false,
+        foregroundColor: scheme.onSurface,
+        titleTextStyle: TextStyle(
+          color: scheme.onSurface,
+          fontSize: 22,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0,
+        ),
+      ),
+      textTheme: _textTheme(brightness),
+      iconTheme: IconThemeData(color: scheme.onSurfaceVariant),
+      primaryIconTheme: IconThemeData(color: scheme.primary),
     );
   }
 }
 
-/// 全局主题模式切换
+/// Theme mode notifier (global toggle)
 class ThemeModeNotifier extends ValueNotifier<bool> {
-  ThemeModeNotifier() : super(true); // true = dark, false = light
+  ThemeModeNotifier() : super(true);
 
-  void toggle() {
-    value = !value;
-  }
+  void toggle() => value = !value;
 }
 
 final themeModeNotifier = ThemeModeNotifier();

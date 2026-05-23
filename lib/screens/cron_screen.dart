@@ -149,7 +149,7 @@ class _CronScreenState extends State<CronScreen> {
               : RefreshIndicator(
                   onRefresh: _loadJobs,
                   child: ListView.builder(
-                    padding: const EdgeInsets.all(16),
+                    padding: EdgeInsets.all(16),
                     itemCount: _jobs.length,
                     itemBuilder: (context, i) => _buildJobCard(_jobs[i]),
                   ),
@@ -163,13 +163,13 @@ class _CronScreenState extends State<CronScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.schedule_outlined,
-              size: 64, color: Colors.white.withValues(alpha: 0.15)),
-          const SizedBox(height: 16),
-          const Text('暂无定时任务',
-              style: TextStyle(fontSize: 18, color: Colors.white38)),
-          const SizedBox(height: 8),
-          const Text('点击右下角 + 创建新任务',
-              style: TextStyle(fontSize: 14, color: Colors.white24)),
+              size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          SizedBox(height: 16),
+          Text('暂无定时任务',
+              style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          SizedBox(height: 8),
+          Text('点击右下角 + 创建新任务',
+              style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ],
       ),
     );
@@ -193,11 +193,11 @@ class _CronScreenState extends State<CronScreen> {
                     shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     job.name,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
@@ -205,9 +205,9 @@ class _CronScreenState extends State<CronScreen> {
                 ),
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1E1E3A),
+                    color: Theme.of(context).colorScheme.surfaceContainerHigh,
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
@@ -246,7 +246,7 @@ class _CronScreenState extends State<CronScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            Divider(color: Colors.white.withValues(alpha: 0.06)),
+            Divider(),
             const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -271,7 +271,7 @@ class _CronScreenState extends State<CronScreen> {
                   AppTheme.info,
                   () => _showEditDialog(job),
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: 8),
                 _buildActionChip(
                   Icons.delete_outline,
                   '删除',
@@ -290,11 +290,11 @@ class _CronScreenState extends State<CronScreen> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 14, color: Colors.white38),
-        const SizedBox(width: 4),
+        Icon(icon, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        SizedBox(width: 4),
         Text(
           text,
-          style: const TextStyle(fontSize: 12, color: Colors.white38),
+          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       ],
     );
@@ -486,21 +486,21 @@ class _CronJobDialogState extends State<_CronJobDialog> {
                   validator: (v) =>
                       v?.trim().isEmpty == true ? '请输入提示词' : null,
                 ),
-                const SizedBox(height: 16),
+                SizedBox(height: 16),
                 // 技能多选
                 InputDecorator(
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: '关联技能（可选）',
                     border: OutlineInputBorder(),
                   ),
                   child: _skillsLoading
-                      ? const SizedBox(
+                      ? SizedBox(
                           height: 40,
                           child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
                         )
                       : _availableSkills.isEmpty
                           ? Text('未检测到已安装的技能',
-                              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))
+                              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13))
                           : Wrap(
                               spacing: 6,
                               runSpacing: 4,
@@ -512,11 +512,11 @@ class _CronJobDialogState extends State<_CronJobDialog> {
                                   label: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Text(name, style: const TextStyle(fontSize: 12)),
+                                      Text(name, style: TextStyle(fontSize: 12)),
                                       if (desc.isNotEmpty) ...[
-                                        const SizedBox(width: 4),
+                                        SizedBox(width: 4),
                                         Text(desc,
-                                            style: const TextStyle(fontSize: 10, color: Colors.white38),
+                                            style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis),
                                       ],
@@ -534,9 +534,9 @@ class _CronJobDialogState extends State<_CronJobDialog> {
                                   },
                                   selectedColor: AppTheme.primary.withValues(alpha: 0.3),
                                   checkmarkColor: AppTheme.primary,
-                                  backgroundColor: Colors.white.withValues(alpha: 0.05),
+                                  backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
                                   labelStyle: TextStyle(
-                                    color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                                    color: selected ? AppTheme.primary : Theme.of(context).colorScheme.onSurfaceVariant,
                                     fontSize: 12,
                                   ),
                                 );

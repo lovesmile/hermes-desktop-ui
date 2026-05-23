@@ -236,10 +236,6 @@ class _ChatScreenState extends State<ChatScreen> {
   void _loadMoreMessages() {
     if (!_messageHasMore || _loadingMoreMessages) return;
     setState(() => _loadingMoreMessages = true);
-    // 记录当前滚动位置距离底部的偏移
-    final offsetFromBottom = _scrollController.hasClients
-        ? _scrollController.position.maxScrollExtent - _scrollController.position.pixels
-        : 0.0;
 
     final newStart = (_messageStartIndex - _messagePageSize).clamp(0, _allLoadedMessages.length);
     final moreMessages = _allLoadedMessages.sublist(newStart, _messageStartIndex);
@@ -421,8 +417,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: _newChat,
-                      icon: const Icon(Icons.add, size: 18),
-                      label: const Text('新对话'),
+                      icon: Icon(Icons.add, size: 18),
+                      label: Text('新对话'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppTheme.primary,
                         side: BorderSide(
@@ -431,21 +427,21 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: 8),
                 // Session list
                 Expanded(
                   child: _loading
-                      ? const Center(child: CircularProgressIndicator())
+                      ? Center(child: CircularProgressIndicator())
                       : _sessions.isEmpty
-                          ? const Center(
+                          ? Center(
                               child: Text('暂无会话',
-                                  style: TextStyle(color: Colors.white38)))
+                                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)))
                           : ListView(
                               controller: _sessionScrollController,
                               children: [
                                 ..._buildSessionGroups(),
                                 if (_loadingMore)
-                                  const Padding(
+                                  Padding(
                                     padding: EdgeInsets.all(12),
                                     child: Center(
                                       child: SizedBox(
@@ -458,12 +454,12 @@ class _ChatScreenState extends State<ChatScreen> {
                                   )
                                 else if (_sessionHasMore)
                                   Padding(
-                                    padding: const EdgeInsets.all(12),
+                                    padding: EdgeInsets.all(12),
                                     child: Center(
                                       child: Text('下滑加载更多',
                                           style: TextStyle(
                                               fontSize: 12,
-                                              color: Colors.white24)),
+                                              color: Theme.of(context).colorScheme.onSurfaceVariant)),
                                     ),
                                   ),
                               ],
@@ -475,7 +471,7 @@ class _ChatScreenState extends State<ChatScreen> {
           // Divider
           Container(
             width: 1,
-            color: Colors.white.withValues(alpha: 0.06),
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
           // Chat area
           Expanded(
@@ -495,7 +491,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             // Loading more indicator at top
                             if (_messageHasMore && i == 0) {
                               return _loadingMoreMessages
-                                  ? const Padding(
+                                  ? Padding(
                                       padding: EdgeInsets.all(12),
                                       child: Center(
                                         child: SizedBox(
@@ -505,10 +501,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ),
                                     )
                                   : Padding(
-                                      padding: const EdgeInsets.all(8),
+                                      padding: EdgeInsets.all(8),
                                       child: Center(
                                         child: Text('向上滚动加载更多历史消息',
-                                            style: TextStyle(fontSize: 11, color: Colors.white24)),
+                                            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                                       ),
                                     );
                             }
@@ -533,12 +529,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 // Input area
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0A0A1A),
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
                     border: Border(
                       top: BorderSide(
-                          color: Colors.white.withValues(alpha: 0.06)),
+                          color: Theme.of(context).colorScheme.outlineVariant),
                     ),
                   ),
                   child: Column(
@@ -633,17 +629,17 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 Text(
                   label,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
-                    color: Colors.white38,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 1,
                   ),
                 ),
-                const Spacer(),
+                Spacer(),
                 Text(
                   '${sessions.length}',
-                  style: const TextStyle(fontSize: 11, color: Colors.white24),
+                  style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
               ],
             ),
@@ -689,22 +685,22 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildSkillSuggestions() {
     final filtered = _filteredSkills.take(10).toList();
     if (filtered.isEmpty) {
-      return const SizedBox.shrink();
+      return SizedBox.shrink();
     }
     return Container(
-      constraints: const BoxConstraints(maxHeight: 200),
-      margin: const EdgeInsets.only(bottom: 8),
+      constraints: BoxConstraints(maxHeight: 200),
+      margin: EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A2E),
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
       child: ListView.separated(
         shrinkWrap: true,
         itemCount: filtered.length,
         separatorBuilder: (_, __) => Divider(
           height: 1,
-          color: Colors.white.withValues(alpha: 0.05),
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
         itemBuilder: (context, i) {
           final skill = filtered[i];
@@ -716,14 +712,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   Icon(Icons.auto_awesome,
                       size: 16, color: AppTheme.secondary),
-                  const SizedBox(width: 10),
+                  SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           skill['name'] ?? '',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                           ),
@@ -735,7 +731,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 11,
-                              color: AppTheme.textSecondary,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                             ),
                           ),
                       ],
@@ -771,18 +767,18 @@ class _ChatScreenState extends State<ChatScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.chat_outlined,
-              size: 64, color: Colors.white.withValues(alpha: 0.15)),
-          const SizedBox(height: 16),
-          const Text(
+              size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          SizedBox(height: 16),
+          Text(
             '选择一个会话或开始新对话',
-            style: TextStyle(fontSize: 16, color: Colors.white38),
+            style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: 8),
           Text(
             '与 Hermes AI 聊天，管理你的对话',
             style: TextStyle(
                 fontSize: 13,
-                color: Colors.white.withValues(alpha: 0.25)),
+                color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -885,7 +881,7 @@ class _SessionItem extends StatelessWidget {
                   // Pin icon
                   if (pinned)
                     Padding(
-                      padding: const EdgeInsets.only(right: 6),
+                      padding: EdgeInsets.only(right: 6),
                       child: Icon(Icons.push_pin,
                           size: 12, color: AppTheme.warning),
                     ),
@@ -894,11 +890,11 @@ class _SessionItem extends StatelessWidget {
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color: selected ? AppTheme.primary : Colors.white24,
+                      color: selected ? AppTheme.primary : Theme.of(context).colorScheme.onSurfaceVariant,
                       shape: BoxShape.circle,
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: 8),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -910,23 +906,23 @@ class _SessionItem extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 13,
                             color: selected
-                                ? Colors.white
-                                : Colors.white70,
+                                ? Theme.of(context).colorScheme.onSurface
+                                : Theme.of(context).colorScheme.onSurface,
                             fontWeight:
                                 selected ? FontWeight.w700 : FontWeight.w400,
                           ),
                         ),
                         if (session.preview != null) ...[
-                          const SizedBox(height: 2),
+                          SizedBox(height: 2),
                           Text(
                             session.preview!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                                 fontSize: 11,
-                                color: selected
-                                    ? Colors.white54
-                                    : Colors.white38),
+                                    color: selected
+                                        ? Theme.of(context).colorScheme.onSurfaceVariant
+                                        : Theme.of(context).colorScheme.onSurfaceVariant),
                           ),
                         ],
                       ],

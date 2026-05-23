@@ -49,12 +49,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Gateway 地址'),
+        title: Text('Gateway 地址'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('设置 Hermes Gateway 地址。\n本地: http://localhost:8642\n远程: http://服务器IP:8642',
-                style: TextStyle(fontSize: 12, color: Colors.white54)),
+            Text('设置 Hermes Gateway 地址。\n本地: http://localhost:8642\n远程: http://服务器IP:8642',
+                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
             const SizedBox(height: 12),
             TextField(
               controller: controller,
@@ -133,17 +133,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => AlertDialog(
         title: Row(
           children: [
-            const Text('编辑 config.yaml'),
-            const Spacer(),
+            Text('编辑 config.yaml'),
+            Spacer(),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.06),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
                 '~/.hermes/config.yaml',
-                style: TextStyle(fontSize: 11, color: AppTheme.textSecondary, fontFamily: 'monospace'),
+                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant, fontFamily: 'monospace'),
               ),
             ),
           ],
@@ -248,13 +248,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildSettingRow('Provider', 'deepseek'),
                   _buildSettingRow('API 地址', 'https://api.deepseek.com'),
                 ]),
-                const SizedBox(height: 16),
+                SizedBox(height: 16),
                 // Display section
                 _buildSection('显示设置', [
                   _buildThemeToggle(),
                   _buildSettingRow('UI 语言', '简体中文'),
                 ]),
-                const SizedBox(height: 16),
+                SizedBox(height: 16),
                 // Gateway section
                 _buildSection('Gateway 设置', [
                   FutureBuilder<String>(
@@ -262,11 +262,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     builder: (context, snapshot) {
                       final url = snapshot.data ?? 'http://localhost:8642';
                       return ListTile(
-                        title: const Text('Gateway 地址',
+                        title: Text('Gateway 地址',
                             style: TextStyle(fontSize: 14)),
                         subtitle: Text(url,
-                            style: const TextStyle(
-                                fontSize: 12, color: Colors.white38,
+                            style: TextStyle(
+                                fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant,
                                 fontFamily: 'monospace')),
                         trailing: const Icon(Icons.edit_outlined, size: 20),
                         onTap: () => _showGatewayUrlEditor(url),
@@ -277,35 +277,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildSettingRow('超时时间', '30 分钟'),
                   _buildSettingRow('日志级别', 'INFO'),
                 ]),
-                const SizedBox(height: 16),
+                SizedBox(height: 16),
                 // Profile section
                 _buildSection('Profile', [
                   _buildSettingRow('当前 Profile', 'default'),
                   ListTile(
-                    title: const Text('管理 Profiles',
+                    title: Text('管理 Profiles',
                         style: TextStyle(fontSize: 14)),
-                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    trailing: Icon(Icons.chevron_right, size: 20),
                     onTap: () {},
                     contentPadding: EdgeInsets.zero,
                   ),
                 ]),
-                const SizedBox(height: 16),
+                SizedBox(height: 16),
                 // Config file
                 _buildSection('配置文件', [
                   ListTile(
-                    title: const Text('编辑 config.yaml',
+                    title: Text('编辑 config.yaml',
                         style: TextStyle(fontSize: 14)),
-                    subtitle: const Text('~/.hermes/config.yaml',
-                        style: TextStyle(fontSize: 12, color: Colors.white38)),
-                    trailing: const Icon(Icons.edit_outlined, size: 20),
+                    subtitle: Text('~/.hermes/config.yaml',
+                        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    trailing: Icon(Icons.edit_outlined, size: 20),
                     onTap: _showConfigEditor,
                     contentPadding: EdgeInsets.zero,
                   ),
                   ListTile(
-                    title: const Text('查看 .env',
+                    title: Text('查看 .env',
                         style: TextStyle(fontSize: 14)),
-                    subtitle: const Text('~/.hermes/.env',
-                        style: TextStyle(fontSize: 12, color: Colors.white38)),
+                    subtitle: Text('~/.hermes/.env',
+                        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                     trailing: const Icon(Icons.visibility_outlined, size: 20),
                     onTap: () async {
                       final env = await _configService.getEnvVars();
@@ -362,7 +362,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: 12),
             ...children,
           ],
         ),
@@ -372,25 +372,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildSettingRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
           SizedBox(
             width: 140,
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
-                color: Colors.white70,
+                color: Theme.of(context).colorScheme.onSurface,
               ),
             ),
           ),
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.onSurface,
               ),
             ),
           ),
@@ -401,14 +401,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildThemeToggle() {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          const SizedBox(
+          SizedBox(
             width: 140,
             child: Text(
               '主题',
-              style: TextStyle(fontSize: 14, color: Colors.white70),
+              style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface),
             ),
           ),
           Text(
