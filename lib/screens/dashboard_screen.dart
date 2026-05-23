@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/gateway_service.dart';
+import '../services/local_db.dart';
 import '../services/config_service.dart';
 import '../widgets/stats_card.dart';
 
@@ -17,6 +18,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final _gateway = GatewayService();
   final _configService = ConfigService();
+  final _localDb = LocalDatabase();
   bool _gatewayOnline = false;
   bool _loading = true;
 
@@ -40,14 +42,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       final hermesHome = ConfigService.resolveHermesHome();
 
-      int sessions = 0;
-      final sessDir = Directory('$hermesHome/sessions');
-      if (await sessDir.exists()) {
-        sessions = await sessDir
-            .list()
-            .where((e) => e.path.endsWith('.jsonl') || e.path.endsWith('.json'))
-            .length;
-      }
+      // 从本地数据库读取会话数
+      final localSessions = await _localDb.getSessions();
+      int sessions = localSessions.length;
 
       final skills = await _configService.getSkills();
 

@@ -552,32 +552,4 @@ class GatewayService {
       return false;
     }
   }
-
-  // ═══════════════════════════════════════════
-  //  本地会话持久化（app 自行管理的会话列表）
-  // ═══════════════════════════════════════════
-
-  String get _localSessionDb => '$_hermesHome/desktop_sessions.json';
-
-  /// 保存本地会话列表到磁盘
-  Future<void> saveLocalSessions(List<Map<String, dynamic>> sessions) async {
-    try {
-      await File(_localSessionDb).writeAsString(jsonEncode(sessions));
-    } catch (_) {}
-  }
-
-  /// 从磁盘读取本地会话列表
-  Future<List<Map<String, dynamic>>> loadLocalSessions() async {
-    try {
-      final file = File(_localSessionDb);
-      if (await file.exists()) {
-        final content = await file.readAsString();
-        final decoded = jsonDecode(content);
-        if (decoded is List) {
-          return decoded.cast<Map<String, dynamic>>();
-        }
-      }
-    } catch (_) {}
-    return [];
-  }
 }

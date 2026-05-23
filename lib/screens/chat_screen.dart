@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/gateway_service.dart';
+import '../services/local_db.dart';
 import '../services/config_service.dart';
 import '../models/session.dart';
 import '../widgets/chat_message.dart';
@@ -16,6 +17,7 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _gateway = GatewayService();
   final _configService = ConfigService();
+  final _localDb = LocalDatabase();
   final _scrollController = ScrollController();
   final _inputController = TextEditingController();
   final _searchController = TextEditingController();
@@ -31,6 +33,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
   bool _loadingMessages = false;
   String _streamingContent = '';
+
+  // ★ 并行流式支持：每个会话独立 buffer 和 subscription
+  final Map<String, String> _streamingBuffers = {};
+  final Map<String, StreamSubscription> _streamSubscriptions = {};
+  final Set<String> _streamingSessions = {};
   bool _searching = false;
 
   // 消息分页
@@ -101,6 +108,13 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _gateway.disconnectChat();
+    // ★ 取消所有并行流的订阅
+    for (final sub in _streamSubscriptions.values) {
+      sub.cancel();
+    }
+    _streamSubscriptions.clear();
+    _streamingBuffers.clear();
+    _streamingSessions.clear();
     _scrollController.dispose();
     _sessionScrollController.dispose();
     _inputController.removeListener(_onInputChanged);
@@ -155,33 +169,12 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _loadSessions() async {
     setState(() => _loading = true);
     try {
-      final sessions = await _gateway.getSessions();
-      // 合并本地持久化的会话（API-created sessions）
-      final localSessions = await _gateway.loadLocalSessions();
-      final allSessions = <Session>[];
-      final seenIds = <String>{};
-      for (final s in sessions) { seenIds.add(s.id); allSessions.add(s); }
-      for (final ls in localSessions) {
-        if (!seenIds.contains(ls['id'])) {
-          seenIds.add(ls['id'] as String);
-          allSessions.add(Session(
-            id: ls['id'] as String? ?? '',
-            title: ls['title'] as String? ?? '',
-            source: ls['source'] as String? ?? 'cli',
-            createdAt: DateTime.tryParse(ls['created_at'] as String? ?? '') ?? DateTime.now(),
-            updatedAt: DateTime.tryParse(ls['updated_at'] as String? ?? '') ?? DateTime.now(),
-            messageCount: ls['message_count'] as int? ?? 0,
-            preview: ls['preview'] as String?,
-          ));
-        }
-      }
-      // 按 updatedAt 倒序
-      allSessions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final sessions = await _localDb.getSessions();
       setState(() {
-        _sessions = allSessions;
+        _sessions = sessions;
         _sessionPage = 0;
-        _sessionHasMore = allSessions.length > _sessionPageSize;
-        _displayedSessions = allSessions.take(_sessionPageSize).toList();
+        _sessionHasMore = sessions.length > _sessionPageSize;
+        _displayedSessions = sessions.take(_sessionPageSize).toList();
         _loading = false;
       });
     } catch (e) {
@@ -232,7 +225,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _showLoading('加载会话中...');
     try {
-      final rawMessages = await _gateway.getSessionMessages(_activeSession!.id);
+      // 从本地数据库读取
+      final rawMessages = await _localDb.getMessages(_activeSession!.id);
+      if (rawMessages.isEmpty) {
+        _hideLoading();
+        _applyMessagePagination([]);
+        return;
+      }
       final messages = <_Message>[];
       for (final m in rawMessages) {
         final role = m['role'] as String? ?? 'user';
@@ -320,7 +319,14 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _activeSession = session;
       _messages = [];
-      _streamingContent = '';
+      // ★ 如果此会话正在流式回复中，显示其 buffer
+      if (_streamingBuffers.containsKey(session.id)) {
+        _streamingContent = _streamingBuffers[session.id]!;
+        _sending = true;
+      } else {
+        _streamingContent = '';
+        _sending = false;
+      }
     });
     // 检查缓存，有就直接显示
     final cached = _messageCache[session.id];
@@ -344,130 +350,167 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty || _sending) return;
 
     _inputController.clear();
-    final msg = _Message(text: text, isUser: true, timestamp: DateTime.now());
+
+    // ★ 记录发消息时的会话 ID
+    final sessionIdAtSend = _activeSession?.id;
+
+    if (sessionIdAtSend != null) {
+      // 已有会话：用户消息立即持久化
+      await _localDb.addMessage(sessionIdAtSend, 'user', text);
+    }
+
+    // 本地显示用户消息
+    final userMsg = _Message(text: text, isUser: true, timestamp: DateTime.now());
+    if (sessionIdAtSend != null) {
+      final cached = _messageCache[sessionIdAtSend];
+      if (cached != null) cached.add(userMsg);
+    }
     setState(() {
-      _messages.add(msg);
-      _sending = true;
-      _streamingContent = '';
+      if (sessionIdAtSend != null) _messages.add(userMsg);
+      if (sessionIdAtSend == null) _sending = true;
     });
+    _scrollToBottom();
 
     try {
-      // 传 sessionId 续传已有会话，没有则创建新会话
-      final stream = _gateway.chatStream(text, sessionId: _activeSession?.id);
-      await for (final chunk in stream) {
-        if (!mounted) break;
-        setState(() => _streamingContent += chunk);
-        _scrollToBottom();
-      }
-      if (_streamingContent.isNotEmpty) {
-        final assistantMsg = _Message(
-          text: _streamingContent,
-          isUser: false,
-          timestamp: DateTime.now(),
-        );
-        setState(() {
-          _messages.add(assistantMsg);
-          _streamingContent = '';
-        });
+      final stream = _gateway.chatStream(text, sessionId: sessionIdAtSend);
+
+      // ★ 如果此会话已有活跃流，先取消旧的（防止重复）
+      if (sessionIdAtSend != null && _streamSubscriptions.containsKey(sessionIdAtSend)) {
+        await _streamSubscriptions[sessionIdAtSend]!.cancel();
+        _streamSubscriptions.remove(sessionIdAtSend);
+        _streamingBuffers.remove(sessionIdAtSend);
+        _streamingSessions.remove(sessionIdAtSend);
       }
 
-      // 拿到 Gateway 返回的 session ID
-      final newSessionId = _gateway.lastSessionId;
-      if (newSessionId != null && newSessionId.isNotEmpty) {
-        if (_activeSession == null) {
-          // 新会话 — 创建本地 Session，刷新列表
-          final newSession = Session(
-            id: newSessionId,
-            title: '${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().day.toString().padLeft(2, '0')} ${text.length > 25 ? '${text.substring(0, 25)}...' : text}',
-            source: 'cli',
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-            messageCount: _messages.length,
-            preview: _messages.last.text.length > 100
-                ? '${_messages.last.text.substring(0, 100)}...'
-                : _messages.last.text,
-          );
-          setState(() {
-            _activeSession = newSession;
-            _sessions.insert(0, newSession);
-            _displayedSessions.insert(0, newSession);
-          });
-          // 缓存消息
-          _messageCache[newSessionId] = List.from(_messages);
-          // 持久化新会话
-          _persistSessions();
-        } else {
-          // 已有会话续传 — 更新缓存
-          _messageCache[_activeSession!.id] = List.from(_messages);
-          // 增量更新列表中当前会话的预览和时间，不重新全量读取
-          if (_activeSession != null) {
-            final updated = Session(
-              id: _activeSession!.id,
-              title: _activeSession!.title,
-              source: _activeSession!.source,
-              createdAt: _activeSession!.createdAt,
-              updatedAt: DateTime.now(),
-              messageCount: _messages.length,
-              preview: _messages.last.text.length > 100
-                  ? '${_messages.last.text.substring(0, 100)}...'
-                  : _messages.last.text,
+      // ★ 用 listen 替代 await for，实现并行流
+      final sub = stream.listen(
+        (chunk) {
+          // 累积到 buffer — 新会话用 __pending__ 占位，已有会话用 sessionId
+          final sid = sessionIdAtSend ?? '__pending__';
+          _streamingBuffers[sid] = (_streamingBuffers[sid] ?? '') + chunk;
+          // 仅当此会话是当前激活会话时更新 UI
+          if (_activeSession?.id == sid && mounted) {
+            setState(() => _streamingContent = _streamingBuffers[sid]!);
+            _scrollToBottom();
+          }
+        },
+        onDone: () async {
+          if (!mounted) return;
+          final newSessionId = _gateway.lastSessionId;
+          // 读 buffer（新会话从 __pending__ 取，已有会话从 sessionId 取）
+          final bufferKey = sessionIdAtSend ?? '__pending__';
+          final response = _streamingBuffers[bufferKey] ?? '';
+
+          if (sessionIdAtSend == null && newSessionId != null && newSessionId.isNotEmpty) {
+            // ── 全新会话 ──
+            // 清理 pending buffer，迁移到真实 sessionId
+            _streamSubscriptions.remove('__pending__');
+            _streamingBuffers.remove('__pending__');
+            _streamingSessions.remove('__pending__');
+            final title = '${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().day.toString().padLeft(2, '0')} ${text.length > 25 ? '${text.substring(0, 25)}...' : text}';
+            await _localDb.createSession(
+              id: newSessionId, title: title,
+              userMessage: text, assistantMessage: response,
             );
-            final idx = _sessions.indexWhere((s) => s.id == _activeSession!.id);
-            final displayIdx = _displayedSessions.indexWhere(
-                (s) => s.id == _activeSession!.id);
-            if (idx >= 0) {
-              _sessions[idx] = updated;
+            final preview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
+            final newSession = Session(
+              id: newSessionId, title: title, source: 'cli',
+              createdAt: DateTime.now(), updatedAt: DateTime.now(),
+              messageCount: 2, preview: preview,
+            );
+            // 缓存
+            _messageCache[newSessionId] = [
+              _Message(text: text, isUser: true, timestamp: DateTime.now()),
+              _Message(text: response, isUser: false, timestamp: DateTime.now()),
+            ];
+            if (mounted) {
+              setState(() {
+                _activeSession = newSession;
+                _sessions.insert(0, newSession);
+                _displayedSessions.insert(0, newSession);
+                _messages = List.from(_messageCache[newSessionId]!);
+                _streamingContent = '';
+                _sending = false;
+              });
             }
-            if (displayIdx >= 0) {
-              _displayedSessions[displayIdx] = updated;
+          } else if (sessionIdAtSend != null && response.isNotEmpty) {
+            // ── 已有会话：存 AI 回复 ──
+            // 清理流状态
+            _streamSubscriptions.remove(sessionIdAtSend);
+            _streamingBuffers.remove(sessionIdAtSend);
+            _streamingSessions.remove(sessionIdAtSend);
+            await _localDb.addMessage(sessionIdAtSend, 'assistant', response);
+            final cached = _messageCache[sessionIdAtSend];
+            if (cached != null) {
+              cached.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
+            }
+            // 更新列表预览
+            final updated = Session(
+              id: sessionIdAtSend, title: _activeSession?.title ?? '',
+              source: 'cli',
+              createdAt: _activeSession?.createdAt ?? DateTime.now(),
+              updatedAt: DateTime.now(),
+              messageCount: (_messageCache[sessionIdAtSend]?.length ?? 0),
+              preview: response.length > 100 ? '${response.substring(0, 100)}...' : response,
+            );
+            if (mounted) {
+              setState(() {
+                final idx = _sessions.indexWhere((s) => s.id == sessionIdAtSend);
+                final displayIdx = _displayedSessions.indexWhere((s) => s.id == sessionIdAtSend);
+                if (idx >= 0) _sessions[idx] = updated;
+                if (displayIdx >= 0) _displayedSessions[displayIdx] = updated;
+                // 如果当前正好在看这个会话，显示回复
+                if (_activeSession?.id == sessionIdAtSend) {
+                  _messages.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
+                  _streamingContent = '';
+                  _sending = false;
+                }
+              });
             }
           }
-        }
-        // 新创建的会话在最前面，滚动到顶部让它可见
-        if (_activeSession != null && _sessions.isNotEmpty &&
-            _sessions[0].id == _activeSession!.id) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_sessionScrollController.hasClients) {
-              _sessionScrollController.animateTo(0,
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOut);
-            }
-          });
-        }
+        },
+        onError: (e) {
+          // 清理
+          final sid = sessionIdAtSend ?? '__pending__';
+          _streamSubscriptions.remove(sid);
+          _streamingBuffers.remove(sid);
+          _streamingSessions.remove(sid);
+          if (mounted) {
+            setState(() {
+              _messages.add(_Message(text: '⚠️ 发送失败: $e', isUser: false, timestamp: DateTime.now(), isError: true));
+              if (sessionIdAtSend == null) _sending = false;
+            });
+          }
+        },
+        cancelOnError: false,
+      );
+
+      // ★ 记录订阅
+      final sid = sessionIdAtSend ?? '__pending_new__';
+      _streamSubscriptions[sid] = sub;
+      _streamingBuffers[sid] = '';
+      _streamingSessions.add(sid);
+
+      // 如果没有 sessionId（新会话），用 pending key 占位
+      if (sessionIdAtSend == null) {
+        // 稍后 onDone 中会拿到 Gateway 返回的 sessionId
       }
+
     } catch (e) {
       if (mounted) {
         setState(() {
-          _messages.add(_Message(
-            text: '⚠️ 发送失败: $e',
-            isUser: false,
-            timestamp: DateTime.now(),
-            isError: true,
-          ));
+          _messages.add(_Message(text: '⚠️ 连接失败: $e', isUser: false, timestamp: DateTime.now(), isError: true));
+          _sending = false;
         });
       }
     } finally {
+      // 不在这里设置 _sending = false，由 onDone 处理
       if (mounted) {
-        setState(() => _sending = false);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _skillNode.requestFocus();
         });
       }
     }
-  }
-
-  /// 将会话列表持久化到本地文件
-  void _persistSessions() {
-    final data = _sessions.map((s) => {
-      'id': s.id,
-      'title': s.title,
-      'source': s.source,
-      'created_at': s.createdAt.toIso8601String(),
-      'updated_at': s.updatedAt.toIso8601String(),
-      'message_count': s.messageCount,
-      'preview': s.preview,
-    }).toList();
-    _gateway.saveLocalSessions(data);
   }
 
   void _scrollToBottom() {
@@ -797,7 +840,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _deleteSession(String id) async {
     _showLoading('删除中...');
     try {
-      await _gateway.deleteSession(id);
+      await _localDb.deleteSession(id);
       _hideLoading();
       setState(() {
         _sessions.removeWhere((s) => s.id == id);

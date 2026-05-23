@@ -196,56 +196,6 @@ class _ModelsScreenState extends State<ModelsScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
-
-                  // 环境变量
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(Icons.settings_suggest,
-                                  color: AppTheme.info, size: 20),
-                              const SizedBox(width: 10),
-                              const Text('环境变量',
-                                  style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600)),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          FutureBuilder<Map<String, String>>(
-                            future: _configService.getEnvVars(),
-                            builder: (context, snapshot) {
-                              if (!snapshot.hasData ||
-                                  snapshot.data!.isEmpty) {
-                                return Text('无环境变量',
-                                    style: TextStyle(
-                                        color: Theme.of(context).colorScheme.onSurfaceVariant));
-                              }
-                              final items = snapshot.data!.entries.toList();
-                              return Column(
-                                children: items.map((e) {
-                                  final isSecret = e.key
-                                      .toLowerCase()
-                                      .contains('key');
-                                  return _configRow(
-                                    e.key,
-                                    isSecret
-                                        ? '••••${e.value.substring(max(0, e.value.length - 4))}'
-                                        : e.value,
-                                  );
-                                }).toList(),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
                   const SizedBox(height: 24),
 
                   // 技能列表标题

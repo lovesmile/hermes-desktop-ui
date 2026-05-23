@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 import 'config/theme.dart';
 import 'services/config_service.dart';
 import 'screens/dashboard_screen.dart';
@@ -13,8 +15,15 @@ import 'screens/models_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/models_screen.dart' as ms; // Provider数据
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ★ 设置默认窗口大小（1280×800，使仪表盘一次性全显示）
+  await windowManager.ensureInitialized();
+  await windowManager.setMinimumSize(const Size(1080, 720));
+  await windowManager.setSize(const Size(1280, 800));
+  await windowManager.center();
+
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
