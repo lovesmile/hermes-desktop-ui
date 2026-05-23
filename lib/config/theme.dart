@@ -149,4 +149,71 @@ class AppTheme {
   static Color get card => _cardColor;
   static Color get textPrimary => _textPrimary;
   static Color get textSecondary => _textSecondary;
+
+  /// 浅色主题
+  static ThemeData get lightTheme {
+    return ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.light,
+      colorScheme: const ColorScheme.light(
+        primary: _primaryColor,
+        secondary: _secondaryColor,
+        surface: Color(0xFFF5F5F5),
+        error: _error,
+        onPrimary: Colors.white,
+        onSecondary: Colors.black,
+        onSurface: Colors.black87,
+      ),
+      scaffoldBackgroundColor: const Color(0xFFF0F0F0),
+      cardTheme: CardThemeData(
+        color: Colors.white,
+        elevation: 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+        ),
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        centerTitle: false,
+        foregroundColor: Colors.black87,
+        titleTextStyle: TextStyle(
+          color: Colors.black87,
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.12)),
+        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+      textTheme: const TextTheme(
+        bodyLarge: TextStyle(color: Colors.black87, fontSize: 15),
+        bodyMedium: TextStyle(color: Colors.black54, fontSize: 14),
+        bodySmall: TextStyle(color: Colors.black45, fontSize: 12),
+      ),
+      dialogTheme: const DialogThemeData(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
+      ),
+    );
+  }
 }
+
+/// 全局主题模式切换
+class ThemeModeNotifier extends ValueNotifier<bool> {
+  ThemeModeNotifier() : super(true); // true = dark, false = light
+
+  void toggle() {
+    value = !value;
+  }
+}
+
+final themeModeNotifier = ThemeModeNotifier();

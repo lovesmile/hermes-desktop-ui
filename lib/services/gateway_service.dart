@@ -6,6 +6,7 @@ import '../models/session.dart';
 import '../models/stats.dart';
 import '../models/cron_job.dart';
 import '../models/log_entry.dart';
+import 'config_service.dart';
 
 /// Hermes Gateway API Server 客户端
 /// 真实接口: OpenAI-compatible API + 文件 I/O
@@ -14,13 +15,18 @@ class GatewayService {
   factory GatewayService() => _instance;
   GatewayService._();
 
-  String _baseUrl = 'http://localhost:8642';
+  final _configService = ConfigService();
+  String _baseUrl = ConfigService.defaultGatewayUrl;
   bool _offline = false;
   bool get isOffline => _offline;
   HttpClient _client = HttpClient();
 
-  String get _hermesHome =>
-      '${Platform.environment['HOME'] ?? '/home/tian'}/.hermes';
+  /// 从配置中刷新 Gateway URL
+  Future<void> refreshBaseUrl() async {
+    _baseUrl = await _configService.getGatewayUrl();
+  }
+
+  String get _hermesHome => ConfigService.resolveHermesHome();
 
   void _resetClient() {
     _client.close(force: true);
@@ -165,53 +171,178 @@ class GatewayService {
   }
 
   // ═══════════════════════════════════════════
-  //  会话（从 SQLite / 文件目录读取）
+  //  会话（从 JSON 文件读取）
   // ═══════════════════════════════════════════
 
   Future<List<Session>> getSessions() async {
     final sessions = <Session>[];
+    final seenIds = <String>{};
     try {
       final dir = Directory('$_hermesHome/sessions');
       if (await dir.exists()) {
-        final files = await dir
-            .list()
-            .where((e) => e.path.endsWith('.jsonl') || e.path.endsWith('.json'))
-            .toList();
+        final files = await dir.list().toList();
+        // 只读 session_*.json 文件，排除 session_cron_* 和 request_dump_*
+        final sessionFiles = files.where((e) {
+          final name = e.uri.pathSegments.last;
+          return name.startsWith('session_') &&
+              !name.startsWith('session_cron_') &&
+              name.endsWith('.json');
+        }).toList();
+
         // 按修改时间倒序
-        files.sort((a, b) {
-          final ma = a.statSync().modified;
+        sessionFiles.sort((a, b) {
           final mb = b.statSync().modified;
+          final ma = a.statSync().modified;
           return mb.compareTo(ma);
         });
 
-        for (final f in files.take(50)) {
-          final name = f.uri.pathSegments.last;
-          final stat = f.statSync();
-          sessions.add(Session(
-            id: name.replaceAll(RegExp(r'\.(jsonl|json)$'), ''),
-            title: name.replaceAll(RegExp(r'[_.]'), ' ').replaceAll(RegExp(r'\.(jsonl|json)$'), ''),
-            source: 'cli',
-            createdAt: stat.modified,
-            updatedAt: stat.modified,
-            messageCount: 0,
-          ));
+        for (final f in sessionFiles) {
+          try {
+            final content = await File(f.path).readAsString();
+            final json = jsonDecode(content);
+            final sid = json['session_id'] ?? '';
+            if (sid.isEmpty || seenIds.contains(sid)) continue;
+            seenIds.add(sid);
+
+            final lastUpdated = json['last_updated'] ?? json['session_start'] ?? '';
+            final updatedAt = lastUpdated is String
+                ? (DateTime.tryParse(lastUpdated) ?? DateTime.now())
+                : DateTime.now();
+
+            // 从 session_id 提取可读标题
+            String title = _formatSessionTitle(sid);
+            final messages = json['messages'] as List?;
+            final msgCount = messages?.length ?? 0;
+            final platform = json['platform'] ?? 'cli';
+
+            // 尝试用最后一条用户消息做标题（更易回忆）
+            String userMsg = '';
+            if (messages != null && messages.isNotEmpty) {
+              for (int i = messages.length - 1; i >= 0; i--) {
+                if (messages[i]['role'] == 'user') {
+                  final c = messages[i]['content'];
+                  if (c is String && c.isNotEmpty) {
+                    final clean = c.replaceAll('\\n', ' ').replaceAll('\n', ' ').trim();
+                    if (clean.isNotEmpty) {
+                      userMsg = clean.length > 30
+                          ? '${clean.substring(0, 30)}...'
+                          : clean;
+                    }
+                  }
+                  break;
+                }
+              }
+            }
+            if (userMsg.isNotEmpty) {
+              title = '$title $userMsg';
+            }
+
+            // 提取预览：最后一条 assistant 消息的前100字符
+            String? preview;
+            if (messages != null && messages.isNotEmpty) {
+              for (int i = messages.length - 1; i >= 0; i--) {
+                final msg = messages[i];
+                if (msg['role'] == 'assistant') {
+                  final c = msg['content'];
+                  if (c is String && c.isNotEmpty) {
+                    preview = c.length > 100 ? '${c.substring(0, 100)}...' : c;
+                    break;
+                  }
+                }
+              }
+              if (preview == null) {
+                final lastMsg = messages.last;
+                final c = lastMsg['content'];
+                if (c is String && c.isNotEmpty) {
+                  preview = c.length > 100 ? '${c.substring(0, 100)}...' : c;
+                }
+              }
+            }
+
+            sessions.add(Session(
+              id: sid,
+              title: title,
+              source: platform,
+              createdAt: updatedAt,
+              updatedAt: updatedAt,
+              messageCount: msgCount,
+              preview: preview,
+            ));
+          } catch (_) {
+            // skip unparseable files
+          }
         }
       }
     } catch (_) {}
     return sessions;
   }
 
-  Future<bool> deleteSession(String id) async {
+  /// 将 session_id 格式化为可读短标题
+  String _formatSessionTitle(String sid) {
+    // 格式: 20260521_154713_7d9a32 → 05/21 15:47
     try {
-      final file = File('$_hermesHome/sessions/$id.jsonl');
-      if (await file.exists()) {
-        await file.delete();
-        return true;
+      final parts = sid.split('_');
+      if (parts.length >= 2) {
+        final dateStr = parts[0]; // 20260521
+        final timeStr = parts[1]; // 154713
+        if (dateStr.length == 8 && timeStr.length == 6) {
+          final month = dateStr.substring(4, 6);
+          final day = dateStr.substring(6, 8);
+          final hour = timeStr.substring(0, 2);
+          final min = timeStr.substring(2, 4);
+          return '$month/$day $hour:$min';
+        }
       }
-      final file2 = File('$_hermesHome/sessions/$id.json');
-      if (await file2.exists()) {
-        await file2.delete();
-        return true;
+    } catch (_) {}
+    // Fallback: use last 8 chars
+    return sid.length > 8 ? '...${sid.substring(sid.length - 8)}' : sid;
+  }
+
+  /// 加载指定会话的消息列表
+  Future<List<Map<String, dynamic>>> getSessionMessages(String sessionId) async {
+    try {
+      final dir = Directory('$_hermesHome/sessions');
+      if (await dir.exists()) {
+        final files = await dir.list().toList();
+        for (final f in files) {
+          final name = f.uri.pathSegments.last;
+          if (name.startsWith('session_') && name.endsWith('.json')) {
+            try {
+              final content = await File(f.path).readAsString();
+              final json = jsonDecode(content);
+              if (json['session_id'] == sessionId) {
+                final messages = json['messages'] as List?;
+                if (messages != null) {
+                  return messages.cast<Map<String, dynamic>>();
+                }
+                return [];
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<bool> deleteSession(String sessionId) async {
+    try {
+      final dir = Directory('$_hermesHome/sessions');
+      if (await dir.exists()) {
+        final files = await dir.list().toList();
+        for (final f in files) {
+          final name = f.uri.pathSegments.last;
+          if (name.endsWith('.json')) {
+            try {
+              final content = await File(f.path).readAsString();
+              final json = jsonDecode(content);
+              if (json['session_id'] == sessionId) {
+                await File(f.path).delete();
+                return true;
+              }
+            } catch (_) {}
+          }
+        }
       }
       return false;
     } catch (_) {

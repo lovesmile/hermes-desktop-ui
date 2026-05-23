@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/gateway_service.dart';
+import '../services/config_service.dart';
 import '../models/session.dart';
 import '../widgets/chat_message.dart';
 
@@ -14,31 +15,108 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final _gateway = GatewayService();
+  final _configService = ConfigService();
   final _scrollController = ScrollController();
   final _inputController = TextEditingController();
   final _searchController = TextEditingController();
 
   List<Session> _sessions = [];
+  List<Session> _displayedSessions = [];
   Session? _activeSession;
   List<_Message> _messages = [];
+  List<_Message> _allLoadedMessages = []; // 完整消息列表
   bool _loading = true;
+  bool _loadingMore = false;
+  bool _loadingMoreMessages = false;
   bool _sending = false;
+  bool _loadingMessages = false;
   String _streamingContent = '';
   bool _searching = false;
+
+  // 消息分页
+  static const int _messagePageSize = 30;
+  int _messageStartIndex = 0;
+  bool _messageHasMore = false;
+
+  // 消息缓存 — 避免重复读 JSON
+  final Map<String, List<_Message>> _messageCache = {};
+
+  // 置顶会话
+  final Set<String> _pinnedSessionIds = {};
+
+  int _sessionPage = 0;
+  static const int _sessionPageSize = 10;
+  bool _sessionHasMore = true;
+  final _sessionScrollController = ScrollController();
+
+  // Skills for / command
+  List<Map<String, String>> _skills = [];
+  bool _skillSuggestionsVisible = false;
+  String _skillFilter = '';
+  final _skillNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     _loadSessions();
+    _loadSkills();
+    _inputController.addListener(_onInputChanged);
+    _sessionScrollController.addListener(_onSessionScroll);
+    _scrollController.addListener(_onMessageScroll);
   }
 
   @override
   void dispose() {
     _gateway.disconnectChat();
     _scrollController.dispose();
+    _sessionScrollController.dispose();
+    _inputController.removeListener(_onInputChanged);
     _inputController.dispose();
     _searchController.dispose();
+    _skillNode.dispose();
     super.dispose();
+  }
+
+  void _onMessageScroll() {
+    // 向上滚动到顶部附近时加载更多历史消息
+    if (_scrollController.position.pixels <= 200 &&
+        _messageHasMore &&
+        !_loadingMoreMessages &&
+        !_loadingMessages &&
+        !_sending) {
+      _loadMoreMessages();
+    }
+  }
+
+  void _onSessionScroll() {
+    if (_sessionScrollController.position.pixels >=
+            _sessionScrollController.position.maxScrollExtent - 200 &&
+        _sessionHasMore &&
+        !_loadingMore) {
+      _loadMoreSessions();
+    }
+  }
+
+  void _onInputChanged() {
+    final text = _inputController.text;
+    if (text.startsWith('/') && !_sending) {
+      final filter = text.substring(1).toLowerCase();
+      setState(() {
+        _skillSuggestionsVisible = true;
+        _skillFilter = filter;
+      });
+    } else {
+      setState(() => _skillSuggestionsVisible = false);
+    }
+  }
+
+  void _insertSkill(String skillName) {
+    _inputController.text = '/$skillName ';
+    _inputController.selection = TextSelection.collapsed(
+      offset: _inputController.text.length,
+    );
+    setState(() => _skillSuggestionsVisible = false);
+    _skillNode.requestFocus();
   }
 
   Future<void> _loadSessions() async {
@@ -47,6 +125,9 @@ class _ChatScreenState extends State<ChatScreen> {
       final sessions = await _gateway.getSessions();
       setState(() {
         _sessions = sessions;
+        _sessionPage = 0;
+        _sessionHasMore = sessions.length > _sessionPageSize;
+        _displayedSessions = sessions.take(_sessionPageSize).toList();
         _loading = false;
       });
     } catch (e) {
@@ -54,13 +135,148 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _loadMoreSessions() {
+    if (!_sessionHasMore || _loadingMore) return;
+    setState(() => _loadingMore = true);
+    _sessionPage++;
+    final start = _sessionPage * _sessionPageSize;
+    final end = start + _sessionPageSize;
+    final more = _sessions.length > start
+        ? _sessions.sublist(start, end > _sessions.length ? _sessions.length : end)
+        : <Session>[];
+    setState(() {
+      _displayedSessions.addAll(more);
+      _sessionHasMore = _sessions.length > _displayedSessions.length;
+      _loadingMore = false;
+    });
+  }
+
+  List<Session> get _filteredSessions {
+    final q = _searchController.text.trim().toLowerCase();
+    if (q.isEmpty) return _displayedSessions;
+    setState(() => _sessionHasMore = false);
+    return _sessions
+        .where((s) => s.title.toLowerCase().contains(q))
+        .toList();
+  }
+  Future<void> _loadSkills() async {
+    try {
+      final skills = await _configService.getSkills();
+      if (mounted) setState(() => _skills = skills);
+    } catch (_) {}
+  }
+
+  Future<void> _loadSessionMessages() async {
+    if (_activeSession == null) return;
+
+    // 检查缓存
+    final cached = _messageCache[_activeSession!.id];
+    if (cached != null) {
+      _applyMessagePagination(cached);
+      return;
+    }
+
+    setState(() => _loadingMessages = true);
+    try {
+      final rawMessages = await _gateway.getSessionMessages(_activeSession!.id);
+      final messages = <_Message>[];
+      for (final m in rawMessages) {
+        final role = m['role'] as String? ?? 'user';
+        if (role == 'tool') continue;
+        final content = m['content'];
+        if (role == 'assistant' && (content == null || (content is String && content.isEmpty))) {
+          continue;
+        }
+        String text;
+        if (content is String) {
+          text = content;
+          text = text.replaceAll('\\n', '\n');
+          text = text.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+          text = text.split('\n').map((l) => l.trim()).join('\n');
+        } else if (content is Map) {
+          text = content.toString();
+        } else {
+          text = content?.toString() ?? '';
+        }
+        if (text.trim().isEmpty) continue;
+        messages.add(_Message(
+          text: text,
+          isUser: role == 'user',
+          timestamp: DateTime.now(),
+        ));
+      }
+      // 写入缓存
+      _messageCache[_activeSession!.id] = messages;
+      _applyMessagePagination(messages);
+    } catch (_) {
+      if (mounted) setState(() => _loadingMessages = false);
+    }
+  }
+
+  void _applyMessagePagination(List<_Message> all) {
+    _allLoadedMessages = all;
+    final total = all.length;
+    final start = total > _messagePageSize ? total - _messagePageSize : 0;
+    final display = all.sublist(start);
+    if (mounted) {
+      setState(() {
+        _allLoadedMessages = all;
+        _messages = display;
+        _messageStartIndex = start;
+        _messageHasMore = start > 0;
+        _loadingMessages = false;
+        _loadingMoreMessages = false;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToBottom();
+      });
+    }
+  }
+
+  void _loadMoreMessages() {
+    if (!_messageHasMore || _loadingMoreMessages) return;
+    setState(() => _loadingMoreMessages = true);
+    // 记录当前滚动位置距离底部的偏移
+    final offsetFromBottom = _scrollController.hasClients
+        ? _scrollController.position.maxScrollExtent - _scrollController.position.pixels
+        : 0.0;
+
+    final newStart = (_messageStartIndex - _messagePageSize).clamp(0, _allLoadedMessages.length);
+    final moreMessages = _allLoadedMessages.sublist(newStart, _messageStartIndex);
+    
+    setState(() {
+      _messages.insertAll(0, moreMessages);
+      _messageStartIndex = newStart;
+      _messageHasMore = newStart > 0;
+      _loadingMoreMessages = false;
+    });
+
+    // 保持滚动位置不变（加载更旧消息后用户看到的还是当前内容）
+    if (_scrollController.hasClients && moreMessages.isNotEmpty) {
+      final estimatedHeight = moreMessages.length * 60.0; // 估算每条消息高度
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.pixels + estimatedHeight);
+        }
+      });
+    }
+  }
+
   void _selectSession(Session session) {
+    // 如果已选中相同会话，不做任何事
+    if (_activeSession?.id == session.id) return;
     setState(() {
       _activeSession = session;
       _messages = [];
       _streamingContent = '';
     });
-    // TODO: load session messages from API
+    // 检查缓存，有就直接显示
+    final cached = _messageCache[session.id];
+    if (cached != null) {
+      _applyMessagePagination(cached);
+    } else {
+      _loadSessionMessages();
+    }
   }
 
   void _newChat() {
@@ -129,18 +345,35 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  List<Session> get _filteredSessions {
-    final q = _searchController.text.trim().toLowerCase();
-    if (q.isEmpty) return _sessions;
-    return _sessions
-        .where((s) => s.title.toLowerCase().contains(q))
-        .toList();
+  void _togglePin(String id) {
+    setState(() {
+      if (_pinnedSessionIds.contains(id)) {
+        _pinnedSessionIds.remove(id);
+      } else {
+        _pinnedSessionIds.add(id);
+      }
+    });
   }
 
   Map<String, List<Session>> get _groupedSessions {
     final groups = <String, List<Session>>{};
+    // 置顶的排在最前面
+    final pinned = <Session>[];
+    final unpinned = <Session>[];
     for (final s in _filteredSessions) {
-      groups.putIfAbsent(s.source, () => []).add(s);
+      if (_pinnedSessionIds.contains(s.id)) {
+        pinned.add(s);
+      } else {
+        unpinned.add(s);
+      }
+    }
+    if (pinned.isNotEmpty) {
+      groups['pin'] = pinned;
+    }
+    if (unpinned.isNotEmpty) {
+      for (final s in unpinned) {
+        groups.putIfAbsent(s.source, () => []).add(s);
+      }
     }
     return groups;
   }
@@ -208,7 +441,32 @@ class _ChatScreenState extends State<ChatScreen> {
                               child: Text('暂无会话',
                                   style: TextStyle(color: Colors.white38)))
                           : ListView(
-                              children: _buildSessionGroups(),
+                              controller: _sessionScrollController,
+                              children: [
+                                ..._buildSessionGroups(),
+                                if (_loadingMore)
+                                  const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: Center(
+                                      child: SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      ),
+                                    ),
+                                  )
+                                else if (_sessionHasMore)
+                                  Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Center(
+                                      child: Text('下滑加载更多',
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.white24)),
+                                    ),
+                                  ),
+                              ],
                             ),
                 ),
               ],
@@ -231,10 +489,32 @@ class _ChatScreenState extends State<ChatScreen> {
                           controller: _scrollController,
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           itemCount: _messages.length +
-                              (_streamingContent.isNotEmpty ? 1 : 0),
+                              (_streamingContent.isNotEmpty ? 1 : 0) +
+                              (_messageHasMore ? 1 : 0),
                           itemBuilder: (context, i) {
-                            if (i < _messages.length) {
-                              final m = _messages[i];
+                            // Loading more indicator at top
+                            if (_messageHasMore && i == 0) {
+                              return _loadingMoreMessages
+                                  ? const Padding(
+                                      padding: EdgeInsets.all(12),
+                                      child: Center(
+                                        child: SizedBox(
+                                          width: 16, height: 16,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        ),
+                                      ),
+                                    )
+                                  : Padding(
+                                      padding: const EdgeInsets.all(8),
+                                      child: Center(
+                                        child: Text('向上滚动加载更多历史消息',
+                                            style: TextStyle(fontSize: 11, color: Colors.white24)),
+                                      ),
+                                    );
+                            }
+                            final msgIndex = _messageHasMore ? i - 1 : i;
+                            if (msgIndex < _messages.length) {
+                              final m = _messages[msgIndex];
                               return ChatMessageWidget(
                                 content: m.text,
                                 isUser: m.isUser,
@@ -242,6 +522,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 toolCalls: m.toolCalls,
                               );
                             }
+                            // Streaming content at bottom
                             return ChatMessageWidget(
                               content: _streamingContent,
                               isUser: false,
@@ -260,49 +541,64 @@ class _ChatScreenState extends State<ChatScreen> {
                           color: Colors.white.withValues(alpha: 0.06)),
                     ),
                   ),
-                  child: Row(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _inputController,
-                          enabled: !_sending,
-                          maxLines: 4,
-                          minLines: 1,
-                          textInputAction: TextInputAction.send,
-                          decoration: InputDecoration(
-                            hintText: _sending ? 'AI 回复中...' : '输入消息...\nEnter 发送 · Shift+Enter 换行',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 12),
-                          ),
-                          onSubmitted: (_) => _sendMessage(),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        child: IconButton(
-                          onPressed: _sending ? null : _sendMessage,
-                          icon: _sending
-                              ? SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppTheme.primary,
-                                  ),
-                                )
-                              : const Icon(Icons.send_rounded),
-                          style: IconButton.styleFrom(
-                            backgroundColor: AppTheme.primary,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                      // Skill suggestions overlay
+                      if (_skillSuggestionsVisible) _buildSkillSuggestions(),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _inputController,
+                              focusNode: _skillNode,
+                              enabled: !_sending && !_loadingMessages,
+                              maxLines: 4,
+                              minLines: 1,
+                              textInputAction: TextInputAction.send,
+                              decoration: InputDecoration(
+                                hintText: _sending
+                                    ? 'AI 回复中...'
+                                    : (_loadingMessages
+                                        ? '加载会话中...'
+                                        : '输入消息... /加载技能\nEnter 发送 · Shift+Enter 换行'),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 12),
+                              ),
+                              onSubmitted: (_) => _sendMessage(),
                             ),
                           ),
-                        ),
+                          const SizedBox(width: 8),
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            child: IconButton(
+                              onPressed:
+                                  (_sending || _loadingMessages)
+                                      ? null
+                                      : _sendMessage,
+                              icon: _sending
+                                  ? SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppTheme.primary,
+                                      ),
+                                    )
+                                  : const Icon(Icons.send_rounded),
+                              style: IconButton.styleFrom(
+                                backgroundColor: AppTheme.primary,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -325,13 +621,14 @@ class _ChatScreenState extends State<ChatScreen> {
     };
 
     return groups.entries.map((entry) {
-      final label = sourceLabels[entry.key] ?? entry.key;
+      final isPin = entry.key == 'pin';
+      final label = isPin ? '📌 置顶' : (sourceLabels[entry.key] ?? entry.key);
       final sessions = entry.value;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            padding: EdgeInsets.fromLTRB(16, isPin ? 4 : 8, 16, 4),
             child: Row(
               children: [
                 Text(
@@ -354,8 +651,10 @@ class _ChatScreenState extends State<ChatScreen> {
           ...sessions.map((s) => _SessionItem(
                 session: s,
                 selected: _activeSession?.id == s.id,
+                pinned: _pinnedSessionIds.contains(s.id),
                 onTap: () => _selectSession(s),
                 onDelete: () => _deleteSession(s.id),
+                onTogglePin: () => _togglePin(s.id),
               )),
         ],
       );
@@ -376,6 +675,94 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     }
+  }
+
+  List<Map<String, String>> get _filteredSkills {
+    if (_skillFilter.isEmpty) return _skills;
+    return _skills
+        .where((s) =>
+            (s['name'] ?? '').toLowerCase().contains(_skillFilter) ||
+            (s['description'] ?? '').toLowerCase().contains(_skillFilter))
+        .toList();
+  }
+
+  Widget _buildSkillSuggestions() {
+    final filtered = _filteredSkills.take(10).toList();
+    if (filtered.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 200),
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A2E),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        itemCount: filtered.length,
+        separatorBuilder: (_, __) => Divider(
+          height: 1,
+          color: Colors.white.withValues(alpha: 0.05),
+        ),
+        itemBuilder: (context, i) {
+          final skill = filtered[i];
+          return InkWell(
+            onTap: () => _insertSkill(skill['name'] ?? ''),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(Icons.auto_awesome,
+                      size: 16, color: AppTheme.secondary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          skill['name'] ?? '',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if ((skill['description'] ?? '').isNotEmpty)
+                          Text(
+                            skill['description'] ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '选择',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: AppTheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Widget _buildEmptyChat() {
@@ -422,25 +809,30 @@ class _Message {
 class _SessionItem extends StatelessWidget {
   final Session session;
   final bool selected;
+  final bool pinned;
   final VoidCallback onTap;
   final VoidCallback onDelete;
+  final VoidCallback onTogglePin;
 
   const _SessionItem({
     required this.session,
     required this.selected,
+    this.pinned = false,
     required this.onTap,
     required this.onDelete,
+    required this.onTogglePin,
   });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       child: Material(
         color: selected
-            ? AppTheme.primary.withValues(alpha: 0.12)
+            ? AppTheme.primary.withValues(alpha: 0.18)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(8),
@@ -448,66 +840,100 @@ class _SessionItem extends StatelessWidget {
             showDialog(
               context: context,
               builder: (ctx) => AlertDialog(
-                title: const Text('删除会话'),
-                content: Text('确定删除「${session.title}」？'),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('取消')),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      onDelete();
-                    },
-                    child: Text('删除',
-                        style: TextStyle(color: AppTheme.error)),
-                  ),
-                ],
+                title: const Text('操作'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      leading: Icon(pinned ? Icons.push_pin_outlined : Icons.push_pin,
+                          color: AppTheme.primary),
+                      title: Text(pinned ? '取消置顶' : '置顶会话'),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        onTogglePin();
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.delete_outline, color: Colors.red),
+                      title: Text('删除「${session.title}」',
+                          style: const TextStyle(color: Colors.red)),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        onDelete();
+                      },
+                    ),
+                  ],
+                ),
               ),
             );
           },
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: selected ? AppTheme.primary : Colors.white24,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        session.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: selected ? Colors.white : Colors.white70,
-                          fontWeight:
-                              selected ? FontWeight.w600 : FontWeight.w400,
-                        ),
+          child: Container(
+            decoration: selected
+                ? BoxDecoration(
+                    border: Border(
+                      left: BorderSide(
+                        color: AppTheme.primary,
+                        width: 3,
                       ),
-                      if (session.preview != null) ...[
-                        const SizedBox(height: 2),
+                    ),
+                  )
+                : null,
+            child: Padding(
+              padding: EdgeInsets.only(left: selected ? 9 : 12, right: 8, top: 10, bottom: 10),
+              child: Row(
+                children: [
+                  // Pin icon
+                  if (pinned)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Icon(Icons.push_pin,
+                          size: 12, color: AppTheme.warning),
+                    ),
+                  // Status dot
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: selected ? AppTheme.primary : Colors.white24,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Text(
-                          session.preview!,
+                          session.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 11, color: Colors.white38),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: selected
+                                ? Colors.white
+                                : Colors.white70,
+                            fontWeight:
+                                selected ? FontWeight.w700 : FontWeight.w400,
+                          ),
                         ),
+                        if (session.preview != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            session.preview!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: selected
+                                    ? Colors.white54
+                                    : Colors.white38),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

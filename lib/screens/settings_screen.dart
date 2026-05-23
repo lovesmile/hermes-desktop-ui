@@ -44,6 +44,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  void _showGatewayUrlEditor(String currentUrl) {
+    final controller = TextEditingController(text: currentUrl);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Gateway 地址'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('设置 Hermes Gateway 地址。\n本地: http://localhost:8642\n远程: http://服务器IP:8642',
+                style: TextStyle(fontSize: 12, color: Colors.white54)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'URL',
+                hintText: 'http://localhost:8642',
+                prefixIcon: Icon(Icons.link),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消')),
+          FilledButton(
+            onPressed: () async {
+              final url = controller.text.trim();
+              if (url.isNotEmpty) {
+                await _configService.setGatewayUrl(url);
+                await _gateway.refreshBaseUrl();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Gateway 地址已更新，重启应用后生效')),
+                  );
+                }
+              }
+              Navigator.pop(ctx);
+              _loadConfig();
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _restartGateway() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -209,7 +257,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 16),
                 // Gateway section
                 _buildSection('Gateway 设置', [
-                  _buildSettingRow('Gateway 地址', 'http://localhost:8642'),
+                  FutureBuilder<String>(
+                    future: _configService.getGatewayUrl(),
+                    builder: (context, snapshot) {
+                      final url = snapshot.data ?? 'http://localhost:8642';
+                      return ListTile(
+                        title: const Text('Gateway 地址',
+                            style: TextStyle(fontSize: 14)),
+                        subtitle: Text(url,
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.white38,
+                                fontFamily: 'monospace')),
+                        trailing: const Icon(Icons.edit_outlined, size: 20),
+                        onTap: () => _showGatewayUrlEditor(url),
+                        contentPadding: EdgeInsets.zero,
+                      );
+                    },
+                  ),
                   _buildSettingRow('超时时间', '30 分钟'),
                   _buildSettingRow('日志级别', 'INFO'),
                 ]),
@@ -347,14 +411,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               style: TextStyle(fontSize: 14, color: Colors.white70),
             ),
           ),
-          const Text(
-            '深色主题',
-            style: TextStyle(fontSize: 14),
+          Text(
+            themeModeNotifier.value ? '深色主题' : '浅色主题',
+            style: const TextStyle(fontSize: 14),
           ),
           const Spacer(),
           Switch(
-            value: true,
-            onChanged: (_) {},
+            value: themeModeNotifier.value,
+            onChanged: (_) => themeModeNotifier.toggle(),
             activeColor: AppTheme.primary,
           ),
         ],

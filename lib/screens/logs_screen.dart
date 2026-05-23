@@ -156,6 +156,16 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                   tooltip: '刷新',
                 ),
                 const SizedBox(width: 4),
+                // Clear display
+                IconButton(
+                  icon: const Icon(Icons.clear_all, size: 20),
+                  onPressed: () {
+                    setState(() => _allLogs = []);
+                  },
+                  tooltip: '清空显示',
+                  color: Colors.white38,
+                ),
+                const SizedBox(width: 4),
                 // Auto-scroll toggle
                 IconButton(
                   icon: Icon(

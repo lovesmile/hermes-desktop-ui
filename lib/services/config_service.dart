@@ -8,12 +8,85 @@ class ConfigService {
   final String hermesHome;
 
   ConfigService({String? hermesHome})
-      : hermesHome = hermesHome ?? '${Platform.environment['HOME'] ?? '/home/tian'}/.hermes';
+      : hermesHome = hermesHome ?? resolveHermesHome();
+
+  static String resolveHermesHome() {
+    // 优先环境变量
+    final envHome = Platform.environment['HERMES_HOME'];
+    if (envHome != null && envHome.isNotEmpty) return envHome;
+
+    // 检查 WSL 路径
+    final home = Platform.environment['HOME'];
+    if (home != null && home.isNotEmpty) {
+      final wslPath = '$home/.hermes';
+      if (Directory(wslPath).existsSync()) return wslPath;
+    }
+
+    // 检查 WSL UNC 路径
+    const uncPath = r'\\wsl.localhost\Ubuntu\home\tian\.hermes';
+    if (Directory(uncPath).existsSync()) return uncPath;
+
+    // 检查 Windows 用户目录
+    final userProfile = Platform.environment['USERPROFILE'];
+    if (userProfile != null) {
+      final winPath = '$userProfile\\.hermes';
+      if (Directory(winPath).existsSync()) return winPath;
+    }
+
+    // 最后 fallback
+    return '/home/tian/.hermes';
+  }
 
   String get configPath => '$hermesHome/config.yaml';
   String get envPath => '$hermesHome/.env';
   String get authPath => '$hermesHome/auth.json';
   String get logsDir => '$hermesHome/logs';
+  String get desktopConfigPath => '$hermesHome/desktop_config.json';
+
+  static const String defaultGatewayUrl = 'http://localhost:8642';
+
+  /// 读取桌面应用配置（Gateway URL 等）
+  Future<Map<String, dynamic>> readDesktopConfig() async {
+    try {
+      final file = File(desktopConfigPath);
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        final decoded = jsonDecode(content);
+        if (decoded is Map) {
+          return decoded.cast<String, dynamic>();
+        }
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  /// 保存桌面应用配置
+  Future<bool> writeDesktopConfig(Map<String, dynamic> data) async {
+    try {
+      await File(desktopConfigPath).writeAsString(jsonEncode(data));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 获取 Gateway URL（带缓存提升性能）
+  String? _cachedGatewayUrl;
+  Future<String> getGatewayUrl() async {
+    if (_cachedGatewayUrl != null) return _cachedGatewayUrl!;
+    final config = await readDesktopConfig();
+    final url = config['gateway_url'] as String?;
+    _cachedGatewayUrl = (url != null && url.isNotEmpty) ? url : defaultGatewayUrl;
+    return _cachedGatewayUrl!;
+  }
+
+  /// 保存 Gateway URL
+  Future<bool> setGatewayUrl(String url) async {
+    _cachedGatewayUrl = url;
+    final config = await readDesktopConfig();
+    config['gateway_url'] = url;
+    return writeDesktopConfig(config);
+  }
 
   Future<String> readConfig() async {
     try {
@@ -38,8 +111,9 @@ class ConfigService {
 
   Future<bool> isGatewayRunning() async {
     try {
+      final url = await getGatewayUrl();
       final result = await HttpClient()
-          .getUrl(Uri.parse('http://localhost:8642/api/health'))
+          .getUrl(Uri.parse('$url/health'))
           .timeout(const Duration(seconds: 3));
       final response = await result.close();
       return response.statusCode == 200;

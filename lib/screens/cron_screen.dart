@@ -506,9 +506,22 @@ class _CronJobDialogState extends State<_CronJobDialog> {
                               runSpacing: 4,
                               children: _availableSkills.map((s) {
                                 final name = s['name'] ?? '';
+                                final desc = s['description'] ?? '';
                                 final selected = _selectedSkills.contains(name);
                                 return FilterChip(
-                                  label: Text(name, style: const TextStyle(fontSize: 12)),
+                                  label: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(name, style: const TextStyle(fontSize: 12)),
+                                      if (desc.isNotEmpty) ...[
+                                        const SizedBox(width: 4),
+                                        Text(desc,
+                                            style: const TextStyle(fontSize: 10, color: Colors.white38),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis),
+                                      ],
+                                    ],
+                                  ),
                                   selected: selected,
                                   onSelected: (v) {
                                     setState(() {

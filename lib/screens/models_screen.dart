@@ -27,19 +27,49 @@ class _ModelsScreenState extends State<ModelsScreen> {
   Future<void> _loadData() async {
     setState(() => _loading = true);
     try {
-      // 读取模型配置
+      // 读取模型配置（处理嵌套 YAML: model.default, model.provider）
       final config = await _configService.readConfig();
       final modelInfo = <String, String>{};
+      String? currentSection;
       for (final line in config.split('\n')) {
         final t = line.trim();
-        if (t.startsWith('default:')) {
-          modelInfo['model'] = t.split(':').sublist(1).join(':').trim();
+        if (t.isEmpty || t.startsWith('#')) continue;
+
+        // 顶层 section 标记（缩进为0且以:结尾）
+        final indent = line.length - line.trimLeft().length;
+        if (indent == 0 && t.endsWith(':') && !t.startsWith('-')) {
+          currentSection = t.substring(0, t.length - 1);
+          continue;
         }
-        if (t.startsWith('provider:')) {
-          modelInfo['provider'] = t.split(':').sublist(1).join(':').trim();
+
+        // 在 model: section 内解析 key: value
+        if (currentSection == 'model' && indent > 0 && t.contains(':')) {
+          final sep = t.indexOf(':');
+          final key = t.substring(0, sep).trim();
+          final val = t.substring(sep + 1).trim();
+          if (key == 'default' || key == 'model') {
+            modelInfo['model'] = val;
+          } else if (key == 'provider') {
+            modelInfo['provider'] = val;
+          } else if (key == 'base_url' || key == 'baseUrl') {
+            modelInfo['base_url'] = val;
+          }
         }
-        if (t.startsWith('base_url:') || t.startsWith('baseUrl:')) {
-          modelInfo['base_url'] = t.split(':').sublist(1).join(':').trim();
+
+        // 也兼容根级 key（旧配置格式）
+        if (indent == 0) {
+          if ((t.startsWith('default:') || t.startsWith('model:')) && !modelInfo.containsKey('model')) {
+            final sep = t.indexOf(':');
+            modelInfo['model'] = t.substring(sep + 1).trim();
+          }
+          if (t.startsWith('provider:') && !modelInfo.containsKey('provider')) {
+            final sep = t.indexOf(':');
+            modelInfo['provider'] = t.substring(sep + 1).trim();
+          }
+          if ((t.startsWith('base_url:') || t.startsWith('baseUrl:')) && !modelInfo.containsKey('base_url')) {
+            final sep = t.indexOf(':');
+            modelInfo['base_url'] = t.substring(sep + 1).trim();
+          }
         }
       }
 
@@ -291,38 +321,67 @@ class _ModelsScreenState extends State<ModelsScreen> {
     ];
     final providers = ['deepseek', 'openrouter', 'anthropic', 'openai', 'gemini'];
 
+    // 编辑控制器
+    final providerCtrl = TextEditingController(text: _modelConfig['provider'] ?? 'deepseek');
+    final modelCtrl = TextEditingController(text: _modelConfig['model'] ?? models[0]);
+    final baseUrlCtrl = TextEditingController(text: _modelConfig['base_url'] ?? '');
+    final apiKeyCtrl = TextEditingController(text: '');
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('切换模型'),
         content: SizedBox(
-          width: 400,
+          width: 450,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('选择 Provider:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-              const SizedBox(height: 8),
+              Text('Provider:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              const SizedBox(height: 6),
               DropdownButtonFormField<String>(
-                value: _modelConfig['provider'] ?? 'deepseek',
+                value: providerCtrl.text,
                 decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
                 items: providers.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
                 onChanged: (v) {
-                  if (v != null) _modelConfig['provider'] = v;
+                  if (v != null) providerCtrl.text = v;
                 },
               ),
-              const SizedBox(height: 16),
-              Text('选择模型:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: _modelConfig['model'] ?? models[0],
-                decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-                onChanged: (v) {
-                  if (v != null) _modelConfig['model'] = v;
-                },
+              const SizedBox(height: 12),
+              Text('模型:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              const SizedBox(height: 6),
+              TextField(
+                controller: modelCtrl,
+                decoration: InputDecoration(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  hintText: 'deepseek-v4-flash',
+                ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              Text('Base URL:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              const SizedBox(height: 6),
+              TextField(
+                controller: baseUrlCtrl,
+                decoration: InputDecoration(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  hintText: 'https://api.deepseek.com',
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text('API Key:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              const SizedBox(height: 6),
+              TextField(
+                controller: apiKeyCtrl,
+                obscureText: true,
+                decoration: InputDecoration(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  hintText: '留空则不修改',
+                ),
+              ),
+              const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
@@ -344,7 +403,12 @@ class _ModelsScreenState extends State<ModelsScreen> {
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(
             onPressed: () {
-              _saveModelConfig();
+              _saveModelConfig(
+                provider: providerCtrl.text,
+                model: modelCtrl.text,
+                baseUrl: baseUrlCtrl.text,
+                apiKey: apiKeyCtrl.text,
+              );
               Navigator.pop(ctx);
             },
             child: const Text('保存并重启 Gateway'),
@@ -354,16 +418,32 @@ class _ModelsScreenState extends State<ModelsScreen> {
     );
   }
 
-  Future<void> _saveModelConfig() async {
-    final provider = _modelConfig['provider'] ?? 'deepseek';
-    final model = _modelConfig['model'] ?? 'deepseek-v4-flash';
+  Future<void> _saveModelConfig({
+    required String provider,
+    required String model,
+    String baseUrl = '',
+    String apiKey = '',
+  }) async {
     // Read current config, update model section
     try {
-      final file = File('${Platform.environment['HOME'] ?? '/home/tian'}/.hermes/config.yaml');
+      final file = File('${ConfigService.resolveHermesHome()}/config.yaml');
       if (await file.exists()) {
         var content = await file.readAsString();
+        // 处理嵌套 YAML: 替换 model: 下的 default/provider/base_url（保留缩进）
+        content = content.replaceAll(RegExp(r'^(\s+)default:.*$', multiLine: true), '  default: $model');
+        content = content.replaceAll(RegExp(r'^(\s+)provider:.*$', multiLine: true), '  provider: $provider');
+        if (baseUrl.isNotEmpty) {
+          content = content.replaceAll(RegExp(r'^(\s+)base_url:.*$', multiLine: true), '  base_url: $baseUrl');
+        }
+        if (apiKey.isNotEmpty) {
+          content = content.replaceAll(RegExp(r'^(\s+)api_key:.*$', multiLine: true), '  api_key: $apiKey');
+        }
+        // 也兼容根级格式
         content = content.replaceAll(RegExp(r'^default:.*$', multiLine: true), 'default: $model');
         content = content.replaceAll(RegExp(r'^provider:.*$', multiLine: true), 'provider: $provider');
+        if (baseUrl.isNotEmpty) {
+          content = content.replaceAll(RegExp(r'^base_url:.*$', multiLine: true), 'base_url: $baseUrl');
+        }
         await file.writeAsString(content);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

@@ -16,17 +16,38 @@ void main() {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
-  runApp(const HermesDesktopApp());
+  runApp(HermesDesktopApp());
 }
 
-class HermesDesktopApp extends StatelessWidget {
-  const HermesDesktopApp({super.key});
+class HermesDesktopApp extends StatefulWidget {
+  @override
+  State<HermesDesktopApp> createState() => _HermesDesktopAppState();
+}
+
+class _HermesDesktopAppState extends State<HermesDesktopApp> {
+  @override
+  void initState() {
+    super.initState();
+    themeModeNotifier.addListener(_onThemeChanged);
+  }
+
+  @override
+  void dispose() {
+    themeModeNotifier.removeListener(_onThemeChanged);
+    super.dispose();
+  }
+
+  void _onThemeChanged() {
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Hermes Desktop',
-      theme: AppTheme.darkTheme,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: themeModeNotifier.value ? ThemeMode.dark : ThemeMode.light,
       debugShowCheckedModeBanner: false,
       home: const MainShell(),
     );
@@ -75,15 +96,17 @@ class MainShellState extends State<MainShell> {
                 setState(() => _sidebarCollapsed = !_sidebarCollapsed),
           ),
           Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              transitionBuilder: (child, animation) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-              child: KeyedSubtree(
-                key: ValueKey(_currentIndex),
-                child: _buildScreen(_currentIndex),
-              ),
+            child: IndexedStack(
+              index: _currentIndex,
+              children: [
+                DashboardScreen(onNavigate: navigateTo),
+                const ChatScreen(),
+                const PlatformsScreen(),
+                const CronScreen(),
+                const LogsScreen(),
+                const ModelsScreen(),
+                const SettingsScreen(),
+              ],
             ),
           ),
         ],
@@ -92,23 +115,6 @@ class MainShellState extends State<MainShell> {
   }
 
   Widget _buildScreen(int index) {
-    switch (index) {
-      case 0:
-        return DashboardScreen(onNavigate: navigateTo);
-      case 1:
-        return const ChatScreen();
-      case 2:
-        return const PlatformsScreen();
-      case 3:
-        return const CronScreen();
-      case 4:
-        return const LogsScreen();
-      case 5:
-        return const ModelsScreen();
-      case 6:
-        return const SettingsScreen();
-      default:
-        return const DashboardScreen();
-    }
+    return const SizedBox.shrink();
   }
 }

@@ -27,13 +27,21 @@ class Sidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor = isDark ? const Color(0xFF0A0A1A) : const Color(0xFFF8F8FF);
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.05)
+        : Colors.black.withValues(alpha: 0.06);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subTextColor = isDark ? Colors.white38 : Colors.black45;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       width: collapsed ? 64 : 220,
       decoration: BoxDecoration(
-        color: const Color(0xFF0A0A1A),
+        color: bgColor,
         border: Border(
-          right: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+          right: BorderSide(color: borderColor),
         ),
       ),
       child: Column(
@@ -66,10 +74,10 @@ class Sidebar extends StatelessWidget {
                 ),
                 if (!collapsed) ...[
                   const SizedBox(width: 12),
-                  const Text(
+                  Text(
                     'Hermes',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: textColor,
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
                     ),
@@ -97,7 +105,7 @@ class Sidebar extends StatelessWidget {
             onPressed: onToggleCollapse,
             icon: Icon(
               collapsed ? Icons.chevron_right : Icons.chevron_left,
-              color: Colors.white38,
+              color: subTextColor,
               size: 20,
             ),
             tooltip: collapsed ? '展开侧栏' : '收起侧栏',
@@ -105,11 +113,11 @@ class Sidebar extends StatelessWidget {
           const SizedBox(height: 8),
           // Version
           if (!collapsed)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 12),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
               child: Text(
                 'v1.0.0',
-                style: TextStyle(color: Colors.white24, fontSize: 11),
+                style: TextStyle(color: subTextColor, fontSize: 11),
               ),
             ),
         ],
@@ -135,6 +143,10 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? AppTheme.textSecondary : Colors.black54;
+    final selectedTextColor = isDark ? AppTheme.primary : AppTheme.primary;
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: collapsed ? 8 : 8, vertical: 2),
       child: Material(
@@ -160,14 +172,14 @@ class _NavItem extends StatelessWidget {
                 Icon(
                   icon,
                   size: 20,
-                  color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                  color: selected ? AppTheme.primary : textColor,
                 ),
                 if (!collapsed) ...[
                   const SizedBox(width: 12),
                   Text(
                     label,
                     style: TextStyle(
-                      color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                      color: selected ? selectedTextColor : textColor,
                       fontSize: 14,
                       fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                     ),

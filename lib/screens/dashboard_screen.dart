@@ -35,6 +35,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _loadData() async {
     setState(() => _loading = true);
     try {
+      await _gateway.refreshBaseUrl();
       final online = await _gateway.checkHealth();
 
       // 统计会话文件
@@ -119,14 +120,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Stats row
-                    Row(
-                      children: [
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
                         Expanded(
                           child: StatsCard(
                             icon: Icons.chat_bubble_outline,
                             value: '$_sessionCount',
-                            label: '会话文件',
+                            label: '会话文件 → 聊天',
                             color: AppTheme.primary,
+                            onTap: () => widget.onNavigate?.call(1),
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -134,8 +138,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           child: StatsCard(
                             icon: Icons.auto_awesome,
                             value: '$_skillCount',
-                            label: '已安装技能',
+                            label: '已安装技能 → 模型与技能',
                             color: AppTheme.secondary,
+                            onTap: () => widget.onNavigate?.call(5),
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -158,7 +163,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 : AppTheme.error,
                           ),
                         ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: StatsCard(
+                            icon: Icons.schedule_outlined,
+                            value: '定时',
+                            label: '定时任务 → 管理',
+                            color: AppTheme.warning,
+                            onTap: () => widget.onNavigate?.call(3),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: StatsCard(
+                            icon: Icons.settings_outlined,
+                            value: '设置',
+                            label: '设置 → 配置',
+                            color: Colors.white38,
+                            onTap: () => widget.onNavigate?.call(6),
+                          ),
+                        ),
                       ],
+                    ),
                     ),
                     const SizedBox(height: 32),
 
@@ -185,62 +211,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                       ),
-                    const SizedBox(height: 24),
-
-                    // 快速入口
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('快捷导航',
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 16),
-                            Wrap(
-                              spacing: 12,
-                              runSpacing: 12,
-                              children: [
-                            _quickAction(
-                              Icons.chat_outlined,
-                              '会话历史',
-                              AppTheme.primary,
-                              () => widget.onNavigate?.call(1),
-                            ),
-                            _quickAction(
-                              Icons.auto_awesome,
-                              '技能列表',
-                              AppTheme.secondary,
-                              () => widget.onNavigate?.call(5),
-                            ),
-                            _quickAction(
-                              Icons.schedule_outlined,
-                              '定时任务',
-                              AppTheme.info,
-                              () => widget.onNavigate?.call(3),
-                            ),
-                            _quickAction(
-                              Icons.settings_outlined,
-                              '设置',
-                              AppTheme.warning,
-                              () => widget.onNavigate?.call(6),
-                            ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              '使用左侧导航栏切换页面',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppTheme.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                     const SizedBox(height: 24),
 
                     // API 状态
@@ -361,33 +331,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 )),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _quickAction(
-      IconData icon, String label, Color color, VoidCallback onTap) {
-    return Material(
-      color: color.withValues(alpha: 0.1),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 18, color: color),
-              const SizedBox(width: 8),
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 14,
-                      color: color,
-                      fontWeight: FontWeight.w500)),
-            ],
-          ),
-        ),
       ),
     );
   }

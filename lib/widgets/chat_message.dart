@@ -72,11 +72,12 @@ class ChatMessageWidget extends StatelessWidget {
                 children: [
                   MarkdownBody(
                     data: content,
+                    selectable: true,
                     styleSheet: MarkdownStyleSheet(
                       p: TextStyle(
                         color: isUser ? Colors.white : Colors.white,
                         fontSize: 14,
-                        height: 1.5,
+                        height: 1.6,
                       ),
                       code: TextStyle(
                         color: AppTheme.secondary,
@@ -107,6 +108,15 @@ class ChatMessageWidget extends StatelessWidget {
                         color: Colors.white.withValues(alpha: 0.03),
                       ),
                       listBullet: TextStyle(color: AppTheme.primary),
+                      listBulletPadding: const EdgeInsets.only(right: 4),
+                      horizontalRuleDecoration: BoxDecoration(
+                        border: Border(
+                          top: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            width: 1,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                   // Tool calls
