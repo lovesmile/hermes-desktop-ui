@@ -17,9 +17,25 @@ class GatewayService {
 
   final _configService = ConfigService();
   String _baseUrl = ConfigService.defaultGatewayUrl;
+  /// 当前使用的 Gateway URL
+  String get baseUrl => _baseUrl;
   bool _offline = false;
   bool get isOffline => _offline;
   HttpClient _client = HttpClient();
+
+  /// 从响应头中读取的最后一个 session ID
+  String? _lastSessionId;
+  /// 最后创建的会话的 session ID（发第一条消息后设置）
+  String? get lastSessionId => _lastSessionId;
+
+  /// 当前正在用的 API Key（从桌面配置读取）
+  String? _apiKey;
+  Future<String> get apiKey async {
+    if (_apiKey != null) return _apiKey!;
+    final config = await _configService.readDesktopConfig();
+    _apiKey = config['api_key'] as String?;
+    return _apiKey ?? '';
+  }
 
   /// 从配置中刷新 Gateway URL
   Future<void> refreshBaseUrl() async {
@@ -55,6 +71,14 @@ class GatewayService {
     }
   }
 
+  /// 在请求上添加认证头（如果配置了 API Key）
+  Future<void> _applyAuth(HttpClientRequest request) async {
+    final key = await apiKey;
+    if (key != null && key.isNotEmpty) {
+      request.headers.set('Authorization', 'Bearer $key');
+    }
+  }
+
   // ═══════════════════════════════════════════
   //  流式聊天 (POST /v1/chat/completions, SSE)
   // ═══════════════════════════════════════════
@@ -78,7 +102,8 @@ class GatewayService {
       final request = await _client.postUrl(uri);
       request.headers.set('Content-Type', 'application/json');
       request.headers.set('Accept', 'text/event-stream');
-      if (sessionId != null) {
+      await _applyAuth(request);
+      if (sessionId != null && sessionId.isNotEmpty) {
         request.headers.set('X-Hermes-Session-Id', sessionId);
       }
 
@@ -89,11 +114,16 @@ class GatewayService {
         ],
         'stream': true,
       });
-      request.write(body);
+      request.add(utf8.encode(body));
 
       final response = await request.close();
+
+      // 读取响应头中的 session ID（无论新会话还是续传都会返回）
+      _lastSessionId = response.headers.value('x-hermes-session-id');
+
       if (response.statusCode != 200) {
-        controller.addError('HTTP ${response.statusCode}');
+        final errBody = await response.transform(utf8.decoder).join();
+        controller.addError('HTTP ${response.statusCode}: $errBody');
         controller.close();
         return;
       }
@@ -209,16 +239,17 @@ class GatewayService {
                 ? (DateTime.tryParse(lastUpdated) ?? DateTime.now())
                 : DateTime.now();
 
-            // 从 session_id 提取可读标题
-            String title = _formatSessionTitle(sid);
+            // 用 last_updated 做时间标题（显示最后一条消息的时间）
+            String title = '${updatedAt.month.toString().padLeft(2, '0')}/${updatedAt.day.toString().padLeft(2, '0')} '
+                '${updatedAt.hour.toString().padLeft(2, '0')}:${updatedAt.minute.toString().padLeft(2, '0')}';
             final messages = json['messages'] as List?;
             final msgCount = messages?.length ?? 0;
             final platform = json['platform'] ?? 'cli';
 
-            // 尝试用最后一条用户消息做标题（更易回忆）
+            // 尝试用第一条用户消息做标题
             String userMsg = '';
             if (messages != null && messages.isNotEmpty) {
-              for (int i = messages.length - 1; i >= 0; i--) {
+              for (int i = 0; i < messages.length; i++) {
                 if (messages[i]['role'] == 'user') {
                   final c = messages[i]['content'];
                   if (c is String && c.isNotEmpty) {
@@ -502,20 +533,51 @@ class GatewayService {
     return logs;
   }
 
-  // ═══════════════════════════════════════════
-  //  网关控制
-  // ═══════════════════════════════════════════
+  /// 清除缓存的 API Key（当设置页修改后调用）
+  void invalidateApiKey() {
+    _apiKey = null;
+  }
 
+  /// 重启 Gateway 服务
   Future<bool> restartGateway() async {
     try {
       _resetClient();
       final request = await _client
-          .postUrl(Uri.parse('$_baseUrl/v1/runs/restart'))
+          .postUrl(Uri.parse('$_baseUrl/gateway/restart'))
           .timeout(const Duration(seconds: 5));
+      _applyAuth(request);
       final response = await request.close();
-      return response.statusCode == 200 || response.statusCode == 202;
+      return response.statusCode == 200;
     } catch (_) {
       return false;
     }
+  }
+
+  // ═══════════════════════════════════════════
+  //  本地会话持久化（app 自行管理的会话列表）
+  // ═══════════════════════════════════════════
+
+  String get _localSessionDb => '$_hermesHome/desktop_sessions.json';
+
+  /// 保存本地会话列表到磁盘
+  Future<void> saveLocalSessions(List<Map<String, dynamic>> sessions) async {
+    try {
+      await File(_localSessionDb).writeAsString(jsonEncode(sessions));
+    } catch (_) {}
+  }
+
+  /// 从磁盘读取本地会话列表
+  Future<List<Map<String, dynamic>>> loadLocalSessions() async {
+    try {
+      final file = File(_localSessionDb);
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        final decoded = jsonDecode(content);
+        if (decoded is List) {
+          return decoded.cast<Map<String, dynamic>>();
+        }
+      }
+    } catch (_) {}
+    return [];
   }
 }

@@ -148,6 +148,29 @@ class ConfigService {
     return env;
   }
 
+  /// 读取 .env 文件的原始内容
+  Future<String> readEnvFile() async {
+    try {
+      final file = File(envPath);
+      if (await file.exists()) {
+        return await file.readAsString();
+      }
+      return '# 环境变量文件为空\n';
+    } catch (e) {
+      return '读取失败: $e';
+    }
+  }
+
+  /// 写入 .env 文件
+  Future<bool> writeEnvFile(String content) async {
+    try {
+      await File(envPath).writeAsString(content);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<Map<String, Map<String, String>>> getAuthProviders() async {
     final providers = <String, Map<String, String>>{};
     try {

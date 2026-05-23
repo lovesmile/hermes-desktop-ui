@@ -38,10 +38,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       await _gateway.refreshBaseUrl();
       final online = await _gateway.checkHealth();
 
-      // 统计会话文件
+      final hermesHome = ConfigService.resolveHermesHome();
+
       int sessions = 0;
-      final sessDir = Directory(
-          '${Platform.environment['HOME'] ?? '/home/tian'}/.hermes/sessions');
+      final sessDir = Directory('$hermesHome/sessions');
       if (await sessDir.exists()) {
         sessions = await sessDir
             .list()
@@ -49,55 +49,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
             .length;
       }
 
-      // 统计技能数量
       final skills = await _configService.getSkills();
 
-      // 日志文件大小
       int logBytes = 0;
-      final logDir = Directory(
-          '${Platform.environment['HOME'] ?? '/home/tian'}/.hermes/logs');
+      final logDir = Directory('$hermesHome/logs');
       if (await logDir.exists()) {
         await for (final f in logDir.list()) {
           if (f is File) logBytes += await f.length();
         }
       }
 
-      // 从 config.yaml 读取 model 配置
+      // 只读 model: 段下的 provider
       final config = await _configService.readConfig();
       String model = '-';
       String provider = '-';
+      String? configSection;
       for (final line in config.split('\n')) {
+        final indent = line.length - line.trimLeft().length;
         final t = line.trim();
-        if (t.startsWith('default:')) {
-          final parts = t.split(':');
-          if (parts.length > 1) model = parts.sublist(1).join(':').trim();
+        if (t.isEmpty || t.startsWith('#')) continue;
+        if (indent == 0 && t.endsWith(':') && !t.startsWith('-')) {
+          configSection = t.substring(0, t.length - 1);
+          continue;
         }
-        if (t.startsWith('provider:')) {
-          final parts = t.split(':');
-          if (parts.length > 1)
-            provider = parts.sublist(1).join(':').trim();
+        if (configSection == 'model' && indent > 0) {
+          if (t.startsWith('default:')) {
+            final sep = t.indexOf(':');
+            model = t.substring(sep + 1).trim();
+          } else if (t.startsWith('provider:')) {
+            final sep = t.indexOf(':');
+            provider = t.substring(sep + 1).trim();
+          }
         }
       }
 
-      setState(() {
-        _gatewayOnline = online;
-        _sessionCount = sessions;
-        _skillCount = skills.length;
-        _logSizeKb = logBytes ~/ 1024;
-        _currentModel = model;
-        _currentProvider = provider;
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _gatewayOnline = online;
+          _sessionCount = sessions;
+          _skillCount = skills.length;
+          _logSizeKb = logBytes ~/ 1024;
+          _currentModel = model;
+          _currentProvider = provider;
+          _loading = false;
+        });
+      }
     } catch (e) {
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _gatewayOnline = false;
+          _loading = false;
+        });
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted && !_gatewayOnline) _loadData();
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Hermes Desktop'),
+        title: const Text('仪表盘'),
         actions: [
           _buildStatusChip(),
           const SizedBox(width: 12),
@@ -109,201 +124,237 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadData,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(24),
+      body: RefreshIndicator(
+        onRefresh: _loadData,
+        child: _loading
+            ? Center(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Stats row
-                    IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                        Expanded(
-                          child: StatsCard(
-                            icon: Icons.chat_bubble_outline,
-                            value: '$_sessionCount',
-                            label: '会话文件 → 聊天',
-                            color: AppTheme.primary,
-                            onTap: () => widget.onNavigate?.call(1),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: StatsCard(
-                            icon: Icons.auto_awesome,
-                            value: '$_skillCount',
-                            label: '已安装技能 → 模型与技能',
-                            color: AppTheme.secondary,
-                            onTap: () => widget.onNavigate?.call(5),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: StatsCard(
-                            icon: Icons.article_outlined,
-                            value: '$_logSizeKb KB',
-                            label: '日志大小',
-                            color: AppTheme.info,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: StatsCard(
-                            icon: Icons.wifi,
-                            value: _gatewayOnline ? '在线' : '离线',
-                            label: 'Gateway',
-                            color: _gatewayOnline
-                                ? AppTheme.success
-                                : AppTheme.error,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: StatsCard(
-                            icon: Icons.schedule_outlined,
-                            value: '定时',
-                            label: '定时任务 → 管理',
-                            color: AppTheme.warning,
-                            onTap: () => widget.onNavigate?.call(3),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: StatsCard(
-                            icon: Icons.settings_outlined,
-                            value: '设置',
-                            label: '设置 → 配置',
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                            onTap: () => widget.onNavigate?.call(6),
-                          ),
-                        ),
-                      ],
-                    ),
-                    ),
-                    const SizedBox(height: 32),
-
-                    // 当前模型配置
-                    if (_currentModel != '-')
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(20),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                    CircularProgressIndicator(color: AppTheme.primary),
+                    const SizedBox(height: 16),
+                    Text('加载中...', style: TextStyle(color: cs.onSurfaceVariant)),
+                  ],
+                ),
+              )
+            : !_gatewayOnline
+                ? _buildOffline(cs)
+                : SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // 统计卡片 — IntrinsicHeight 保证等高
+                        IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              const Text('模型配置',
-                                  style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600)),
-                              const SizedBox(height: 16),
-                              _infoRow('当前模型', _currentModel),
-                              _infoRow('Provider', _currentProvider),
-                              _infoRow('Gateway 地址',
-                                  'http://localhost:8642'),
-                              _infoRow('Hermes 目录',
-                                  '~/.hermes'),
+                              Flexible(
+                                flex: 1,
+                                child: StatsCard(
+                                  icon: Icons.chat_bubble_outline,
+                                  value: '$_sessionCount',
+                                  label: '总会话数',
+                                  color: AppTheme.primary,
+                                  onTap: () => widget.onNavigate?.call(1),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Flexible(
+                                flex: 1,
+                                child: StatsCard(
+                                  icon: Icons.auto_awesome,
+                                  value: '$_skillCount',
+                                  label: '已装技能',
+                                  color: AppTheme.info,
+                                  onTap: () => widget.onNavigate?.call(5),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Flexible(
+                                flex: 1,
+                                child: StatsCard(
+                                  icon: Icons.article_outlined,
+                                  value: '$_logSizeKb KB',
+                                  label: '日志大小',
+                                  color: AppTheme.secondary,
+                                  onTap: () => widget.onNavigate?.call(4),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Flexible(
+                                flex: 1,
+                                child: StatsCard(
+                                  icon: Icons.wifi,
+                                  value: _gatewayOnline ? '在线' : '离线',
+                                  label: 'Gateway',
+                                  color: _gatewayOnline
+                                      ? AppTheme.success
+                                      : AppTheme.error,
+                                  onTap: () => widget.onNavigate?.call(6),
+                                ),
+                              ),
                             ],
                           ),
                         ),
-                      ),
-                    const SizedBox(height: 24),
+                        const SizedBox(height: 32),
 
-                    // API 状态
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('API Server 状态',
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 16),
-                            Row(
+                        // 当前模型配置
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: (_gatewayOnline
-                                            ? AppTheme.success
-                                            : AppTheme.error)
-                                        .withValues(alpha: 0.15),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    _gatewayOnline ? '运行中' : '未运行',
+                                Text('模型配置',
                                     style: TextStyle(
-                                      color: _gatewayOnline
-                                          ? AppTheme.success
-                                          : AppTheme.error,
-                                      fontWeight: FontWeight.w500,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: cs.onSurface)),
+                                const SizedBox(height: 16),
+                                _infoRow('当前模型', _currentModel, cs),
+                                _infoRow('Provider', _currentProvider, cs),
+                                _infoRow('Gateway', _gateway.baseUrl, cs),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+
+                        // 快捷导航
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('快捷导航',
+                                    style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: cs.onSurface)),
+                                const SizedBox(height: 16),
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: [
+                                    _quickAction(
+                                      Icons.chat_outlined,
+                                      '会话历史',
+                                      AppTheme.primary,
+                                      () => widget.onNavigate?.call(1),
                                     ),
-                                  ),
+                                    _quickAction(
+                                      Icons.auto_awesome,
+                                      '技能列表',
+                                      AppTheme.info,
+                                      () => widget.onNavigate?.call(5),
+                                    ),
+                                    _quickAction(
+                                      Icons.schedule_outlined,
+                                      '定时任务',
+                                      AppTheme.secondary,
+                                      () => widget.onNavigate?.call(3),
+                                    ),
+                                    _quickAction(
+                                      Icons.settings_outlined,
+                                      '设置',
+                                      AppTheme.warning,
+                                      () => widget.onNavigate?.call(6),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 12),
+                                const SizedBox(height: 12),
                                 Text(
-                                  'localhost:8642',
+                                  '也可使用左侧导航栏切换页面',
                                   style: TextStyle(
-                                    fontFamily: 'monospace',
-                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                    fontSize: 12,
+                                    color: cs.onSurfaceVariant,
                                   ),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '需在 ~/.hermes/.env 中设置 API_SERVER_ENABLED=true',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 24),
+
+                        // API Server 状态
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('API Server 状态',
+                                    style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: cs.onSurface)),
+                                const SizedBox(height: 16),
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: (_gatewayOnline
+                                                ? AppTheme.success
+                                                : AppTheme.error)
+                                            .withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        _gatewayOnline ? '运行中' : '未运行',
+                                        style: TextStyle(
+                                          color: _gatewayOnline
+                                              ? AppTheme.success
+                                              : AppTheme.error,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      _gateway.baseUrl,
+                                      style: TextStyle(
+                                        fontFamily: 'monospace',
+                                        color: cs.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            ),
+                  ),
+      ),
     );
   }
 
   Widget _buildStatusChip() {
+    final color = _gatewayOnline ? AppTheme.success : AppTheme.error;
     return Center(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: (_gatewayOnline ? AppTheme.success : AppTheme.error)
-              .withValues(alpha: 0.15),
+          color: color.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: _gatewayOnline ? AppTheme.success : AppTheme.error,
-                shape: BoxShape.circle,
-              ),
+              width: 8, height: 8,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
             ),
             const SizedBox(width: 6),
             Text(
               _gatewayOnline ? '在线' : '离线',
-              style: TextStyle(
-                fontSize: 13,
-                color: _gatewayOnline ? AppTheme.success : AppTheme.error,
-                fontWeight: FontWeight.w500,
-              ),
+              style: TextStyle(fontSize: 13, color: color, fontWeight: FontWeight.w500),
             ),
           ],
         ),
@@ -311,7 +362,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _infoRow(String label, String value) {
+  Widget _buildOffline(ColorScheme cs) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.cloud_off, size: 64, color: cs.onSurfaceVariant),
+          const SizedBox(height: 16),
+          Text('Hermes Gateway 未运行',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: cs.onSurface)),
+          const SizedBox(height: 8),
+          Text('请确保 Hermes Gateway 已启动 (hermes gateway run)',
+              style: TextStyle(color: cs.onSurfaceVariant)),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: _loadData,
+            icon: const Icon(Icons.refresh),
+            label: const Text('重新连接'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(String label, String value, ColorScheme cs) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -319,18 +393,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
           SizedBox(
             width: 120,
             child: Text(label,
-                style: TextStyle(
-                    fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
           ),
           Expanded(
             child: Text(value,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontFamily: 'monospace',
-                  color: Theme.of(context).colorScheme.onSurface,
-                )),
+                style: TextStyle(fontSize: 13, fontFamily: 'monospace', color: cs.onSurface)),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _quickAction(
+      IconData icon, String label, Color color, VoidCallback onTap) {
+    return Material(
+      color: color.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 8),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 14,
+                      color: color,
+                      fontWeight: FontWeight.w500)),
+            ],
+          ),
+        ),
       ),
     );
   }

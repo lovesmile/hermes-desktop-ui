@@ -92,6 +92,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  void _showApiKeyEditor(String currentKey) {
+    final controller = TextEditingController(text: currentKey);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('API Key'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Gateway 的 API_SERVER_KEY，用于会话续传认证。\\n需要与 ~/.hermes/.env 中设置的值一致。',
+                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'API Key',
+                hintText: 'Bearer token',
+                prefixIcon: Icon(Icons.key),
+              ),
+              obscureText: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消')),
+          FilledButton(
+            onPressed: () async {
+              final key = controller.text.trim();
+              final config = await _configService.readDesktopConfig();
+              config['api_key'] = key;
+              await _configService.writeDesktopConfig(config);
+              _gateway.invalidateApiKey();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('API Key 已保存')),
+                );
+              }
+              Navigator.pop(ctx);
+              _loadConfig();
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEnvEditor() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _EnvEditorDialog(),
+    );
+  }
+
   Future<void> _restartGateway() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -274,20 +331,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     },
                   ),
+                  FutureBuilder<String>(
+                    future: _gateway.apiKey,
+                    builder: (context, snapshot) {
+                      final key = snapshot.data ?? '';
+                      final masked = key.isEmpty
+                          ? '未设置'
+                          : '${key.substring(0, 3)}****${key.length > 6 ? key.substring(key.length - 3) : ''}';
+                      return ListTile(
+                        title: Text('API Key',
+                            style: TextStyle(fontSize: 14)),
+                        subtitle: Text(masked,
+                            style: TextStyle(
+                                fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                fontFamily: 'monospace')),
+                        trailing: const Icon(Icons.edit_outlined, size: 20),
+                        onTap: () => _showApiKeyEditor(key),
+                        contentPadding: EdgeInsets.zero,
+                      );
+                    },
+                  ),
                   _buildSettingRow('超时时间', '30 分钟'),
                   _buildSettingRow('日志级别', 'INFO'),
-                ]),
-                SizedBox(height: 16),
-                // Profile section
-                _buildSection('Profile', [
-                  _buildSettingRow('当前 Profile', 'default'),
-                  ListTile(
-                    title: Text('管理 Profiles',
-                        style: TextStyle(fontSize: 14)),
-                    trailing: Icon(Icons.chevron_right, size: 20),
-                    onTap: () {},
-                    contentPadding: EdgeInsets.zero,
-                  ),
                 ]),
                 SizedBox(height: 16),
                 // Config file
@@ -302,35 +367,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     contentPadding: EdgeInsets.zero,
                   ),
                   ListTile(
-                    title: Text('查看 .env',
+                    title: Text('编辑 .env',
                         style: TextStyle(fontSize: 14)),
                     subtitle: Text('~/.hermes/.env',
                         style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                    trailing: const Icon(Icons.visibility_outlined, size: 20),
-                    onTap: () async {
-                      final env = await _configService.getEnvVars();
-                      final keys = env.keys.join('\n');
-                      if (mounted) {
-                        showDialog(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('环境变量'),
-                            content: Text(
-                              keys.isEmpty ? '无环境变量' : keys,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 12,
-                              ),
-                            ),
-                            actions: [
-                              TextButton(
-                                  onPressed: () => Navigator.pop(ctx),
-                                  child: const Text('关闭')),
-                            ],
-                          ),
-                        );
-                      }
-                    },
+                    trailing: const Icon(Icons.edit_outlined, size: 20),
+                    onTap: _showEnvEditor,
                     contentPadding: EdgeInsets.zero,
                   ),
                 ]),
@@ -340,7 +382,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildSettingRow('Hermes Desktop', 'v1.0.0'),
                   _buildSettingRow('Hermes Agent', 'v2.x'),
                   _buildSettingRow('项目地址',
-                      'github.com/NousResearch/hermes-agent'),
+                      'github.com/lovesmile/hermes-desktop-ui'),
                 ]),
                 const SizedBox(height: 32),
               ],
@@ -423,6 +465,99 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// .env 文件编辑器弹窗
+class _EnvEditorDialog extends StatefulWidget {
+  @override
+  State<_EnvEditorDialog> createState() => _EnvEditorDialogState();
+}
+
+class _EnvEditorDialogState extends State<_EnvEditorDialog> {
+  final _configService = ConfigService();
+  final _controller = TextEditingController();
+  bool _loading = true;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final content = await _configService.readEnvFile();
+    if (mounted) {
+      setState(() {
+        _controller.text = content;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    final success = await _configService.writeEnvFile(_controller.text);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(success ? '.env 已保存' : '保存失败'),
+          backgroundColor: success ? AppTheme.success : AppTheme.error,
+        ),
+      );
+      if (success) Navigator.pop(context);
+      setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Row(
+        children: [
+          const Text('编辑 .env'),
+          const Spacer(),
+          Text('~/.hermes/.env',
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ],
+      ),
+      content: SizedBox(
+        width: 650,
+        height: 450,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : TextField(
+                controller: _controller,
+                maxLines: null,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.5),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.all(12),
+                  hintText: '# .env 配置内容...',
+                ),
+              ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: const Text('取消')),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Text('保存'),
+        ),
+      ],
     );
   }
 }

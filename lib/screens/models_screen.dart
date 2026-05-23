@@ -1,9 +1,58 @@
 import 'dart:io';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/config_service.dart';
+
+/// Provider → 可选模型列表
+const Map<String, List<String>> providerModels = {
+  'deepseek': ['deepseek-v4-flash', 'deepseek-v3', 'deepseek-r1'],
+  'openrouter': [
+    'anthropic/claude-sonnet-4', 'anthropic/claude-opus-4',
+    'openai/gpt-4o', 'openai/gpt-4o-mini',
+    'google/gemini-2.5-pro', 'google/gemini-2.5-flash',
+    'deepseek/deepseek-v4-flash', 'deepseek/deepseek-v3',
+    'meta-llama/llama-4', 'cohere/command-r7',
+  ],
+  'anthropic': ['claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4'],
+  'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'o3', 'o4-mini'],
+  'gemini': ['gemini-2.5-pro', 'gemini-2.5-flash'],
+  'kimi': ['kimi-k2.5'],
+  'ollama': ['llama-3.3-70b', 'qwen-2.5-72b', 'mistral-large'],
+  'glm': ['glm-4-plus', 'glm-4-air'],
+  'minimax': ['minimax-m2.5'],
+  'arcee': ['trinity-mini', 'trinity-large'],
+  'opencode-zen': ['gpt-4o', 'claude-sonnet-4', 'gemini-2.5-pro'],
+  'opencode-go': ['glm-5', 'kimi-k2.5', 'minimax-m2.5'],
+  'huggingface': ['meta-llama/Llama-4', 'mistralai/Mistral-Large'],
+  'qwen': ['qwen-max', 'qwen-plus'],
+  'xiaomi': ['mimo-v2-pro', 'mimo-v2-flash', 'mimo-v2-omni'],
+};
+
+/// Provider → 默认 Base URL
+const Map<String, String> providerBaseUrls = {
+  'deepseek': 'https://api.deepseek.com/v1',
+  'openrouter': 'https://openrouter.ai/api/v1',
+  'anthropic': 'https://api.anthropic.com/v1',
+  'openai': 'https://api.openai.com/v1',
+  'gemini': 'https://generativelanguage.googleapis.com/v1beta/openai',
+  'kimi': 'https://api.moonshot.cn/v1',
+  'ollama': 'https://ollama.com/v1',
+  'glm': 'https://api.z.ai/api/paas/v4',
+  'minimax': 'https://api.minimax.io/v1',
+  'arcee': 'https://api.arcee.ai/v1',
+  'opencode-zen': 'https://opencode.ai/zen/v1',
+  'opencode-go': 'https://opencode.ai/zen/go/v1',
+  'huggingface': 'https://api-inference.huggingface.co/v1',
+  'qwen': 'https://portal.qwen.ai/v1',
+  'xiaomi': 'https://api.xiaomimimo.com/v1',
+};
+
+const allProviders = [
+  'deepseek', 'openrouter', 'anthropic', 'openai', 'gemini', 'kimi',
+  'ollama', 'glm', 'minimax', 'arcee',
+  'opencode-zen', 'opencode-go', 'huggingface', 'qwen', 'xiaomi',
+];
 
 class ModelsScreen extends StatefulWidget {
   const ModelsScreen({super.key});
@@ -177,8 +226,9 @@ class _ModelsScreenState extends State<ModelsScreen> {
                                     style: TextStyle(
                                         color: Theme.of(context).colorScheme.onSurfaceVariant));
                               }
+                              final items = snapshot.data!.entries.toList();
                               return Column(
-                                children: snapshot.data!.entries.map((e) {
+                                children: items.map((e) {
                                   final isSecret = e.key
                                       .toLowerCase()
                                       .contains('key');
@@ -312,108 +362,197 @@ class _ModelsScreenState extends State<ModelsScreen> {
     );
   }
 
+  /// 切换模型弹窗 — 可滚动 + Provider 联动模型 + 默认 Base URL
   void _showModelSelector() {
-    final models = [
-      'deepseek-v4-flash', 'deepseek-v3', 'deepseek-r1',
-      'claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4',
-      'gpt-4o', 'gpt-4o-mini',
-      'gemini-2.5-pro', 'gemini-2.5-flash',
-    ];
-    final providers = ['deepseek', 'openrouter', 'anthropic', 'openai', 'gemini'];
+    String selectedProvider = _modelConfig['provider'] ?? 'deepseek';
+    String selectedModel = _modelConfig['model'] ?? 'deepseek-v4-flash';
+    String baseUrl = _modelConfig['base_url'] ?? providerBaseUrls[selectedProvider] ?? '';
+    String apiKey = '';
+    bool showCustomModel = false; // 是否显示自定义模型输入
 
-    // 编辑控制器
-    final providerCtrl = TextEditingController(text: _modelConfig['provider'] ?? 'deepseek');
-    final modelCtrl = TextEditingController(text: _modelConfig['model'] ?? models[0]);
-    final baseUrlCtrl = TextEditingController(text: _modelConfig['base_url'] ?? '');
+    final baseUrlCtrl = TextEditingController(text: baseUrl);
     final apiKeyCtrl = TextEditingController(text: '');
+    final modelCtrl = TextEditingController(text: selectedModel);
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('切换模型'),
-        content: SizedBox(
-          width: 450,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Provider:', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<String>(
-                value: providerCtrl.text,
-                decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                items: providers.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
-                onChanged: (v) {
-                  if (v != null) providerCtrl.text = v;
-                },
-              ),
-              const SizedBox(height: 12),
-              Text('模型:', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 6),
-              TextField(
-                controller: modelCtrl,
-                decoration: InputDecoration(
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  hintText: 'deepseek-v4-flash',
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text('Base URL:', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 6),
-              TextField(
-                controller: baseUrlCtrl,
-                decoration: InputDecoration(
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  hintText: 'https://api.deepseek.com',
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text('API Key:', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 6),
-              TextField(
-                controller: apiKeyCtrl,
-                obscureText: true,
-                decoration: InputDecoration(
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  hintText: '留空则不修改',
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppTheme.warning.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final models = providerModels[selectedProvider] ?? [];
+          final isCustom = showCustomModel || !models.contains(selectedModel);
+
+          return AlertDialog(
+            title: const Text('切换模型'),
+            content: SizedBox(
+              width: 480,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.info_outline, size: 14, color: AppTheme.warning),
-                    SizedBox(width: 6),
-                    Expanded(child: Text('修改会写入 ~/.hermes/config.yaml，需要重启 Gateway 生效', style: TextStyle(fontSize: 11, color: AppTheme.warning))),
+                    // ── Provider ──
+                    Text('Provider',
+                        style: TextStyle(fontSize: 13,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      value: selectedProvider,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      items: allProviders
+                          .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                          .toList(),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setDialogState(() {
+                          selectedProvider = v;
+                          // 自动填充 Base URL
+                          baseUrl = providerBaseUrls[v] ?? '';
+                          baseUrlCtrl.text = baseUrl;
+                          // 自动选第一个模型
+                          final newModels = providerModels[v] ?? [];
+                          if (newModels.isNotEmpty) {
+                            selectedModel = newModels.first;
+                            modelCtrl.text = selectedModel;
+                          } else {
+                            selectedModel = '';
+                            modelCtrl.text = '';
+                          }
+                          showCustomModel = false;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    // ── 模型 ──
+                    Text('模型',
+                        style: TextStyle(fontSize: 13,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    const SizedBox(height: 6),
+                    if (models.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        value: isCustom ? '__custom__' : selectedModel,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        ),
+                        items: [
+                          ...models.map((m) =>
+                              DropdownMenuItem(value: m, child: Text(m))),
+                          const DropdownMenuItem(
+                              value: '__custom__',
+                              child: Text('其他（自定义模型名）')),
+                        ],
+                        onChanged: (v) {
+                          if (v == '__custom__') {
+                            setDialogState(() {
+                              showCustomModel = true;
+                              modelCtrl.text = selectedModel;
+                            });
+                          } else if (v != null) {
+                            setDialogState(() {
+                              showCustomModel = false;
+                              selectedModel = v;
+                              modelCtrl.text = v;
+                            });
+                          }
+                        },
+                      ),
+                    if (isCustom)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: TextField(
+                          controller: modelCtrl,
+                          decoration: InputDecoration(
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            hintText: '输入模型名称',
+                          ),
+                          onChanged: (v) => selectedModel = v,
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+
+                    // ── Base URL ──
+                    Text('Base URL',
+                        style: TextStyle(fontSize: 13,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: baseUrlCtrl,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        hintText: 'https://api.deepseek.com/v1',
+                      ),
+                      onChanged: (v) => baseUrl = v,
+                    ),
+                    const SizedBox(height: 12),
+
+                    // ── API Key ──
+                    Text('API Key（留空则不修改）',
+                        style: TextStyle(fontSize: 13,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: apiKeyCtrl,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        hintText: '新的 API Key（存 ~/.hermes/.env）',
+                      ),
+                      onChanged: (v) => apiKey = v,
+                    ),
+                    const SizedBox(height: 12),
+
+                    // ── 提示 ──
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.warning.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.info_outline, size: 14, color: AppTheme.warning),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '修改会写入 ~/.hermes/config.yaml（和 .env），需要重启 Gateway 生效',
+                              style: TextStyle(fontSize: 11, color: AppTheme.warning),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消')),
+              FilledButton(
+                onPressed: () {
+                  _saveModelConfig(
+                    provider: selectedProvider,
+                    model: modelCtrl.text.trim(),
+                    baseUrl: baseUrlCtrl.text.trim(),
+                    apiKey: apiKeyCtrl.text.trim(),
+                  );
+                  Navigator.pop(ctx);
+                },
+                child: const Text('保存并重启 Gateway'),
+              ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(
-            onPressed: () {
-              _saveModelConfig(
-                provider: providerCtrl.text,
-                model: modelCtrl.text,
-                baseUrl: baseUrlCtrl.text,
-                apiKey: apiKeyCtrl.text,
-              );
-              Navigator.pop(ctx);
-            },
-            child: const Text('保存并重启 Gateway'),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -424,19 +563,24 @@ class _ModelsScreenState extends State<ModelsScreen> {
     String baseUrl = '',
     String apiKey = '',
   }) async {
-    // Read current config, update model section
+    if (model.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('模型名称不能为空')),
+        );
+      }
+      return;
+    }
     try {
-      final file = File('${ConfigService.resolveHermesHome()}/config.yaml');
+      final hermesHome = ConfigService.resolveHermesHome();
+      // 写 config.yaml
+      final file = File('$hermesHome/config.yaml');
       if (await file.exists()) {
         var content = await file.readAsString();
-        // 处理嵌套 YAML: 替换 model: 下的 default/provider/base_url（保留缩进）
         content = content.replaceAll(RegExp(r'^(\s+)default:.*$', multiLine: true), '  default: $model');
         content = content.replaceAll(RegExp(r'^(\s+)provider:.*$', multiLine: true), '  provider: $provider');
         if (baseUrl.isNotEmpty) {
           content = content.replaceAll(RegExp(r'^(\s+)base_url:.*$', multiLine: true), '  base_url: $baseUrl');
-        }
-        if (apiKey.isNotEmpty) {
-          content = content.replaceAll(RegExp(r'^(\s+)api_key:.*$', multiLine: true), '  api_key: $apiKey');
         }
         // 也兼容根级格式
         content = content.replaceAll(RegExp(r'^default:.*$', multiLine: true), 'default: $model');
@@ -445,12 +589,45 @@ class _ModelsScreenState extends State<ModelsScreen> {
           content = content.replaceAll(RegExp(r'^base_url:.*$', multiLine: true), 'base_url: $baseUrl');
         }
         await file.writeAsString(content);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('配置已保存，请重启 Gateway')),
-          );
-          _loadData();
+      }
+
+      // 写 .env（API Key + Base URL 的环境变量）
+      if (apiKey.isNotEmpty) {
+        final envFile = File('$hermesHome/.env');
+        if (await envFile.exists()) {
+          var envContent = await envFile.readAsString();
+          final providerUpper = provider.toUpperCase();
+          // 替换或追加 Provider_API_KEY
+          final keyVar = '${providerUpper}_API_KEY';
+          if (envContent.contains('$keyVar=')) {
+            envContent = envContent.replaceAll(
+              RegExp('^$keyVar=.*' r'$', multiLine: true),
+              '$keyVar=$apiKey',
+            );
+          } else {
+            envContent += '\n$keyVar=$apiKey\n';
+          }
+          // 替换或追加 Provider_BASE_URL
+          if (baseUrl.isNotEmpty) {
+            final urlVar = '${providerUpper}_BASE_URL';
+            if (envContent.contains('$urlVar=')) {
+              envContent = envContent.replaceAll(
+                RegExp('^$urlVar=.*' r'$', multiLine: true),
+                '$urlVar=$baseUrl',
+              );
+            } else {
+              envContent += '\n$urlVar=$baseUrl\n';
+            }
+          }
+          await envFile.writeAsString(envContent);
         }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('配置已保存，请重启 Gateway')),
+        );
+        _loadData();
       }
     } catch (e) {
       if (mounted) {
@@ -492,3 +669,5 @@ class _ModelsScreenState extends State<ModelsScreen> {
     );
   }
 }
+
+int max(int a, int b) => a > b ? a : b;

@@ -225,7 +225,7 @@ class AppTheme {
 
 /// Theme mode notifier (global toggle)
 class ThemeModeNotifier extends ValueNotifier<bool> {
-  ThemeModeNotifier() : super(true);
+  ThemeModeNotifier() : super(false);
 
   void toggle() => value = !value;
 }

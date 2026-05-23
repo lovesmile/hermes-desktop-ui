@@ -38,6 +38,39 @@ class _ChatScreenState extends State<ChatScreen> {
   int _messageStartIndex = 0;
   bool _messageHasMore = false;
 
+  // Loading 弹窗
+  bool _loadingDialogShowing = false;
+
+  void _showLoading(String message) {
+    if (_loadingDialogShowing) return;
+    _loadingDialogShowing = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 16),
+              Text(message),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _hideLoading() {
+    if (!_loadingDialogShowing) return;
+    _loadingDialogShowing = false;
+    Navigator.of(context, rootNavigator: true).pop();
+  }
+
   // 消息缓存 — 避免重复读 JSON
   final Map<String, List<_Message>> _messageCache = {};
 
@@ -123,11 +156,32 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _loading = true);
     try {
       final sessions = await _gateway.getSessions();
+      // 合并本地持久化的会话（API-created sessions）
+      final localSessions = await _gateway.loadLocalSessions();
+      final allSessions = <Session>[];
+      final seenIds = <String>{};
+      for (final s in sessions) { seenIds.add(s.id); allSessions.add(s); }
+      for (final ls in localSessions) {
+        if (!seenIds.contains(ls['id'])) {
+          seenIds.add(ls['id'] as String);
+          allSessions.add(Session(
+            id: ls['id'] as String? ?? '',
+            title: ls['title'] as String? ?? '',
+            source: ls['source'] as String? ?? 'cli',
+            createdAt: DateTime.tryParse(ls['created_at'] as String? ?? '') ?? DateTime.now(),
+            updatedAt: DateTime.tryParse(ls['updated_at'] as String? ?? '') ?? DateTime.now(),
+            messageCount: ls['message_count'] as int? ?? 0,
+            preview: ls['preview'] as String?,
+          ));
+        }
+      }
+      // 按 updatedAt 倒序
+      allSessions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       setState(() {
-        _sessions = sessions;
+        _sessions = allSessions;
         _sessionPage = 0;
-        _sessionHasMore = sessions.length > _sessionPageSize;
-        _displayedSessions = sessions.take(_sessionPageSize).toList();
+        _sessionHasMore = allSessions.length > _sessionPageSize;
+        _displayedSessions = allSessions.take(_sessionPageSize).toList();
         _loading = false;
       });
     } catch (e) {
@@ -176,7 +230,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    setState(() => _loadingMessages = true);
+    _showLoading('加载会话中...');
     try {
       final rawMessages = await _gateway.getSessionMessages(_activeSession!.id);
       final messages = <_Message>[];
@@ -209,6 +263,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _messageCache[_activeSession!.id] = messages;
       _applyMessagePagination(messages);
     } catch (_) {
+      _hideLoading();
       if (mounted) setState(() => _loadingMessages = false);
     }
   }
@@ -227,6 +282,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _loadingMessages = false;
         _loadingMoreMessages = false;
       });
+      _hideLoading();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scrollToBottom();
       });
@@ -296,22 +352,88 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      final stream = _gateway.chatStream(text,
-          sessionId: _activeSession?.id);
+      // 传 sessionId 续传已有会话，没有则创建新会话
+      final stream = _gateway.chatStream(text, sessionId: _activeSession?.id);
       await for (final chunk in stream) {
         if (!mounted) break;
         setState(() => _streamingContent += chunk);
         _scrollToBottom();
       }
       if (_streamingContent.isNotEmpty) {
+        final assistantMsg = _Message(
+          text: _streamingContent,
+          isUser: false,
+          timestamp: DateTime.now(),
+        );
         setState(() {
-          _messages.add(_Message(
-            text: _streamingContent,
-            isUser: false,
-            timestamp: DateTime.now(),
-          ));
+          _messages.add(assistantMsg);
           _streamingContent = '';
         });
+      }
+
+      // 拿到 Gateway 返回的 session ID
+      final newSessionId = _gateway.lastSessionId;
+      if (newSessionId != null && newSessionId.isNotEmpty) {
+        if (_activeSession == null) {
+          // 新会话 — 创建本地 Session，刷新列表
+          final newSession = Session(
+            id: newSessionId,
+            title: '${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().day.toString().padLeft(2, '0')} ${text.length > 25 ? '${text.substring(0, 25)}...' : text}',
+            source: 'cli',
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+            messageCount: _messages.length,
+            preview: _messages.last.text.length > 100
+                ? '${_messages.last.text.substring(0, 100)}...'
+                : _messages.last.text,
+          );
+          setState(() {
+            _activeSession = newSession;
+            _sessions.insert(0, newSession);
+            _displayedSessions.insert(0, newSession);
+          });
+          // 缓存消息
+          _messageCache[newSessionId] = List.from(_messages);
+          // 持久化新会话
+          _persistSessions();
+        } else {
+          // 已有会话续传 — 更新缓存
+          _messageCache[_activeSession!.id] = List.from(_messages);
+          // 增量更新列表中当前会话的预览和时间，不重新全量读取
+          if (_activeSession != null) {
+            final updated = Session(
+              id: _activeSession!.id,
+              title: _activeSession!.title,
+              source: _activeSession!.source,
+              createdAt: _activeSession!.createdAt,
+              updatedAt: DateTime.now(),
+              messageCount: _messages.length,
+              preview: _messages.last.text.length > 100
+                  ? '${_messages.last.text.substring(0, 100)}...'
+                  : _messages.last.text,
+            );
+            final idx = _sessions.indexWhere((s) => s.id == _activeSession!.id);
+            final displayIdx = _displayedSessions.indexWhere(
+                (s) => s.id == _activeSession!.id);
+            if (idx >= 0) {
+              _sessions[idx] = updated;
+            }
+            if (displayIdx >= 0) {
+              _displayedSessions[displayIdx] = updated;
+            }
+          }
+        }
+        // 新创建的会话在最前面，滚动到顶部让它可见
+        if (_activeSession != null && _sessions.isNotEmpty &&
+            _sessions[0].id == _activeSession!.id) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_sessionScrollController.hasClients) {
+              _sessionScrollController.animateTo(0,
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOut);
+            }
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -325,19 +447,36 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     } finally {
-      if (mounted) setState(() => _sending = false);
+      if (mounted) {
+        setState(() => _sending = false);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _skillNode.requestFocus();
+        });
+      }
     }
+  }
+
+  /// 将会话列表持久化到本地文件
+  void _persistSessions() {
+    final data = _sessions.map((s) => {
+      'id': s.id,
+      'title': s.title,
+      'source': s.source,
+      'created_at': s.createdAt.toIso8601String(),
+      'updated_at': s.updatedAt.toIso8601String(),
+      'message_count': s.messageCount,
+      'preview': s.preview,
+    }).toList();
+    _gateway.saveLocalSessions(data);
   }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 100),
-          curve: Curves.easeOut,
-        );
-      }
+      if (!_scrollController.hasClients) return;
+      // 用跳转而非动画，确保立即到位
+      _scrollController.jumpTo(
+        _scrollController.position.maxScrollExtent,
+      );
     });
   }
 
@@ -555,9 +694,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               decoration: InputDecoration(
                                 hintText: _sending
                                     ? 'AI 回复中...'
-                                    : (_loadingMessages
-                                        ? '加载会话中...'
-                                        : '输入消息... /加载技能\nEnter 发送 · Shift+Enter 换行'),
+                                    : '输入消息... / 加载技能\nEnter 发送 · Shift+Enter 换行',
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -658,18 +795,23 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _deleteSession(String id) async {
+    _showLoading('删除中...');
     try {
       await _gateway.deleteSession(id);
+      _hideLoading();
       setState(() {
         _sessions.removeWhere((s) => s.id == id);
+        _displayedSessions.removeWhere((s) => s.id == id);
         if (_activeSession?.id == id) _newChat();
       });
     } catch (e) {
+      _hideLoading();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('删除失败: $e')),
         );
       }
+      _loadSessions();
     }
   }
 
@@ -825,51 +967,22 @@ class _SessionItem extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       child: Material(
         color: selected
-            ? AppTheme.primary.withValues(alpha: 0.18)
+            ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.65)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
+          onSecondaryTap: () => _showContextMenu(context),
           borderRadius: BorderRadius.circular(8),
-          onLongPress: () {
-            showDialog(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Text('操作'),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ListTile(
-                      leading: Icon(pinned ? Icons.push_pin_outlined : Icons.push_pin,
-                          color: AppTheme.primary),
-                      title: Text(pinned ? '取消置顶' : '置顶会话'),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        onTogglePin();
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.delete_outline, color: Colors.red),
-                      title: Text('删除「${session.title}」',
-                          style: const TextStyle(color: Colors.red)),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        onDelete();
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+          onLongPress: () => _showContextMenu(context),
           child: Container(
             decoration: selected
                 ? BoxDecoration(
                     border: Border(
                       left: BorderSide(
-                        color: AppTheme.primary,
-                        width: 3,
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 5,
                       ),
                     ),
                   )
@@ -934,6 +1047,57 @@ class _SessionItem extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  void _showContextMenu(BuildContext context) {
+    final renderBox = context.findRenderObject() as RenderBox;
+    final offset = renderBox.localToGlobal(Offset.zero);
+    final size = renderBox.size;
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        offset.dx + size.width,
+        offset.dy,
+        offset.dx + size.width + 1,
+        offset.dy + 1,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      items: [
+        PopupMenuItem<String>(
+          value: 'pin',
+          child: SizedBox(
+            width: 180,
+            child: Row(
+              children: [
+                Icon(pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                    size: 18, color: AppTheme.primary),
+                const SizedBox(width: 12),
+                Text(pinned ? '取消置顶' : '置顶会话'),
+              ],
+            ),
+          ),
+          onTap: () => onTogglePin(),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: SizedBox(
+            width: 180,
+            child: Row(
+              children: [
+                const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                const SizedBox(width: 12),
+                Text('删除',
+                    style: const TextStyle(color: Colors.red)),
+              ],
+            ),
+          ),
+          onTap: () => onDelete(),
+        ),
+      ],
     );
   }
 }
