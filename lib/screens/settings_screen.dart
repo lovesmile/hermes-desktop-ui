@@ -61,7 +61,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _onConnectionChanged() {
-    if (mounted) _loadConnectionState();
+    if (mounted) {
+      // 只更新状态显示，不覆盖用户正在编辑的模式和端口
+      final state = _cm.state;
+      setState(() {
+        _connectionMessage = state.message;
+        _connectionSuccess = state.status == ConnStatus.connected;
+      });
+    }
   }
 
   Future<void> _loadConnectionState() async {
@@ -69,6 +76,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _selectedMode = state.mode;
       _portController.text = state.port.toString();
+      _connectionMessage = state.message;
+      _connectionSuccess = state.status == ConnStatus.connected;
     });
 
     // Load saved SSH config

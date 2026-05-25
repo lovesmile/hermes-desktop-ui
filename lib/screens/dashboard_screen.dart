@@ -121,8 +121,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // 从 cron/jobs.json 获取定时任务数（fallback）
       if (cronCount == 0) {
         try {
-          final result = await _cm.execBash('cat ~/.hermes/cron/jobs.json 2>/dev/null');
-          final stdout = (result.stdout as String).trim();
+          final result = await _cm.runShell('cat ~/.hermes/cron/jobs.json 2>/dev/null || true', allowFailure: true);
+          final stdout = result.stdout.trim();
           if (stdout.isNotEmpty) {
             final json = jsonDecode(stdout);
             if (json is Map && json['jobs'] is List) {

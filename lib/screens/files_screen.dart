@@ -19,7 +19,20 @@ class _FilesScreenState extends State<FilesScreen> {
   @override
   void initState() {
     super.initState();
+    _cm.stateNotifier.addListener(_onConnectionChanged);
     _loadFiles();
+  }
+
+  @override
+  void dispose() {
+    _cm.stateNotifier.removeListener(_onConnectionChanged);
+    super.dispose();
+  }
+
+  void _onConnectionChanged() {
+    if (_cm.state.status == ConnStatus.connected && mounted) {
+      _loadFiles();
+    }
   }
 
   Future<void> _loadFiles() async {
