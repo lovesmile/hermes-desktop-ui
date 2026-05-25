@@ -1,18 +1,22 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
-import '../services/gateway_service.dart';
+import '../services/connection_manager.dart';
 import '../services/config_service.dart';
+import '../services/gateway_service.dart';
 import '../models/cron_job.dart';
 
 class CronScreen extends StatefulWidget {
   const CronScreen({super.key});
-
   @override
   State<CronScreen> createState() => _CronScreenState();
 }
 
 class _CronScreenState extends State<CronScreen> {
+  final _cm = ConnectionManager();
   final _gateway = GatewayService();
+  final _configService = ConfigService();
   List<CronJob> _jobs = [];
   bool _loading = true;
 
@@ -22,25 +26,65 @@ class _CronScreenState extends State<CronScreen> {
     _loadJobs();
   }
 
+  /// 从本地文件读取定时任务列表
+  Future<List<CronJob>> _readJobsFromFile() async {
+    final result = await _cm.execBash('cat ~/.hermes/cron/jobs.json 2>/dev/null');
+    final stdout = (result.stdout as String).trim();
+    if (stdout.isEmpty) return [];
+    final json = jsonDecode(stdout);
+    final list = json['jobs'] as List? ?? [];
+    return list.map((j) {
+      final map = j as Map<String, dynamic>;
+      final sched = map['schedule'];
+      String schedStr;
+      if (sched is Map) {
+        schedStr = sched['expr'] as String? ?? sched['kind'] as String? ?? '0 9 * * *';
+      } else {
+        schedStr = sched as String? ?? '0 9 * * *';
+      }
+      return CronJob(
+        id: map['id'] ?? '',
+        name: map['name'] ?? '未命名任务',
+        schedule: schedStr,
+        prompt: map['prompt'] ?? '',
+        status: map['status'] ?? (map['enabled'] == false ? 'paused' : 'active'),
+        createdAt: DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
+        skillNames: map['skills'] != null ? List<String>.from(map['skills']) : null,
+      );
+    }).toList();
+  }
+
+  /// 写入定时任务到本地文件
+  Future<void> _writeJobsToFile(List jobsData) async {
+    final jsonStr = jsonEncode({'jobs': jobsData});
+    final b64 = base64Encode(utf8.encode(jsonStr));
+    await _cm.execBash('echo "$b64" | base64 -d > ~/.hermes/cron/jobs.json');
+  }
+
   Future<void> _loadJobs() async {
     setState(() => _loading = true);
     try {
-      final jobs = await _gateway.getCronJobs();
-      setState(() {
-        _jobs = jobs;
-        _loading = false;
-      });
+      final jobs = await _readJobsFromFile();
+      if (mounted) setState(() { _jobs = jobs; _loading = false; });
     } catch (e) {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _toggleJob(CronJob job) async {
     try {
-      await _gateway.updateCronJob(job.id, {
-        'status': job.isActive ? 'paused' : 'active',
-      });
+      final cmd = job.isActive ? 'pause' : 'resume';
+      final result = await _cm.execBash('hermes --accept-hooks cron $cmd ${job.id} 2>&1');
+      final out = (result.stdout as String).trim();
+      if (result.exitCode != 0) {
+        throw Exception(out.isNotEmpty ? out : 'hermes --accept-hooks cron $cmd failed (exit ${result.exitCode})');
+      }
       _loadJobs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(job.isActive ? '已暂停: ${job.name}' : '已恢复: ${job.name}')),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -52,10 +96,14 @@ class _CronScreenState extends State<CronScreen> {
 
   Future<void> _runJob(CronJob job) async {
     try {
-      await _gateway.runCronJob(job.id);
+      final result = await _cm.execBash('hermes --accept-hooks cron run ${job.id} 2>&1');
+      final out = (result.stdout as String).trim();
+      if (result.exitCode != 0) {
+        throw Exception(out.isNotEmpty ? out : 'hermes --accept-hooks cron run failed (exit ${result.exitCode})');
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('任务已触发')),
+          SnackBar(content: Text('任务已触发: ${job.name}')),
         );
       }
     } catch (e) {
@@ -71,24 +119,28 @@ class _CronScreenState extends State<CronScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除任务'),
-        content: Text('确定删除「${job.name}」？此操作不可撤销。'),
+        title: const Text('确认删除'),
+        content: Text('确定要删除定时任务「${job.name}」吗？'),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child:
-                Text('删除', style: TextStyle(color: AppTheme.error)),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('删除'),
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.error)),
         ],
       ),
     );
     if (confirmed == true) {
       try {
-        await _gateway.deleteCronJob(job.id);
+        final result = await _cm.execBash('hermes --accept-hooks cron remove ${job.id} 2>&1');
+        final out = (result.stdout as String).trim();
+        if (result.exitCode != 0) {
+          throw Exception(out.isNotEmpty ? out : 'hermes --accept-hooks cron remove failed (exit ${result.exitCode})');
+        }
         _loadJobs();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已删除: ${job.name}')),
+          );
+        }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -99,85 +151,640 @@ class _CronScreenState extends State<CronScreen> {
     }
   }
 
-  void _showCreateDialog() {
+  Future<void> _showAddJobDialog() async {
+    final nameController = TextEditingController();
+    final skillSearchController = TextEditingController();
+    final promptController = TextEditingController();
+    String scheduleType = '每天';
+    int hour = 9;
+    int minute = 0;
+    int dayOfMonth = 1;
+    List<String> selectedSkills = [];
+    List<String> allSkills = [];
+
+    // 懒加载技能列表
+    try {
+      final skills = await _configService.getSkills();
+      allSkills = skills.map((s) => s['name'] ?? '').where((n) => n.isNotEmpty).toList()..sort();
+    } catch (_) {}
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      useSafeArea: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final filteredSkills = allSkills.where((s) =>
+              skillSearchController.text.isEmpty ||
+              s.toLowerCase().contains(skillSearchController.text.toLowerCase())
+          ).toList();
+
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('添加定时任务',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 20),
+                  // 任务名称
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: '任务名称', hintText: '输入任务名称',
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // 执行时间 + 时/分
+                  DropdownButtonFormField<String>(
+                    value: scheduleType,
+                    decoration: const InputDecoration(labelText: '执行时间', isDense: true),
+                    items: ['每天', '工作日', '每月', '自定义']
+                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => scheduleType = v!),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: hour,
+                          decoration: const InputDecoration(labelText: '小时', isDense: true),
+                          items: List.generate(24, (i) => DropdownMenuItem(
+                            value: i, child: Text(i.toString().padLeft(2, '0')),
+                          )),
+                          onChanged: (v) => setDialogState(() => hour = v!),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: minute,
+                          decoration: const InputDecoration(labelText: '分钟', isDense: true),
+                          items: List.generate(60, (i) => DropdownMenuItem(
+                            value: i, child: Text(i.toString().padLeft(2, '0')),
+                          )),
+                          onChanged: (v) => setDialogState(() => minute = v!),
+                        ),
+                      ),
+                      if (scheduleType == '每月') ...[
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: DropdownButtonFormField<int>(
+                            value: dayOfMonth,
+                            decoration: const InputDecoration(labelText: '日期', isDense: true),
+                            items: List.generate(28, (i) => DropdownMenuItem(
+                              value: i + 1, child: Text('${i + 1}日'),
+                            )),
+                            onChanged: (v) => setDialogState(() => dayOfMonth = v!),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // 技能选择 — 搜索 + 下拉多选
+                  const Text('技能选择', style: TextStyle(fontSize: 13)),
+                  const SizedBox(height: 4),
+                  TextField(
+                    decoration: const InputDecoration(
+                      hintText: '搜索技能...', isDense: true,
+                      prefixIcon: Icon(Icons.search, size: 18),
+                    ),
+                    onChanged: (v) => setDialogState(() {}),
+                    controller: skillSearchController,
+                  ),
+                  const SizedBox(height: 4),
+                  if (selectedSkills.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Wrap(
+                        spacing: 6, runSpacing: 4,
+                        children: selectedSkills.map((skill) => Chip(
+                          label: Text(skill, style: const TextStyle(fontSize: 12)),
+                          deleteIcon: const Icon(Icons.close, size: 16),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          onDeleted: () => setDialogState(() => selectedSkills.remove(skill)),
+                        )).toList(),
+                      ),
+                    ),
+                  // 固定高度的技能下拉列表
+                  Container(
+                    height: 120,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: allSkills.isEmpty
+                        ? Center(
+                            child: Text('暂无可用技能',
+                                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)))
+                        : ListView(
+                            padding: EdgeInsets.zero,
+                            children: filteredSkills.map((skill) {
+                              final selected = selectedSkills.contains(skill);
+                              return CheckboxListTile(
+                                dense: true,
+                                visualDensity: VisualDensity.compact,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                                title: Text(skill, style: const TextStyle(fontSize: 13)),
+                                value: selected,
+                                onChanged: (v) {
+                                  setDialogState(() {
+                                    if (v == true) {
+                                      selectedSkills.add(skill);
+                                    } else {
+                                      selectedSkills.remove(skill);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  // 执行描述
+                  TextField(
+                    controller: promptController,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: '执行描述',
+                      hintText: '输入任务执行描述',
+                      isDense: true,
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+                      const SizedBox(width: 12),
+                      FilledButton(
+                        onPressed: () {
+                          final name = nameController.text.trim();
+                          if (name.isEmpty) return;
+                          final cronMap = {
+                            'name': name,
+                            'scheduleType': scheduleType,
+                            'hour': hour,
+                            'minute': minute,
+                            'dayOfMonth': dayOfMonth,
+                            'skills': selectedSkills,
+                            'prompt': promptController.text.trim(),
+                          };
+                          Navigator.pop(ctx, cronMap);
+                        },
+                        child: const Text('保存'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    if (result == null) return;
+    // 显示加载弹窗
+    if (!mounted) return;
     showDialog(
       context: context,
-      builder: (ctx) => _CronJobDialog(
-        onSaved: () {
-          _loadJobs();
-          Navigator.pop(ctx);
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('正在创建定时任务...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // 通过 hermes CLI 创建定时任务
+    try {
+      final cronExpr = switch (result['scheduleType'] as String) {
+        '每天' => '${result['minute']} ${result['hour']} * * *',
+        '工作日' => '${result['minute']} ${result['hour']} * * 1-5',
+        '每月' => '${result['minute']} ${result['hour']} ${result['dayOfMonth']} * *',
+        _ => '${result['minute']} ${result['hour']} * * *',
+      };
+
+      final name = (result['name'] as String).trim();
+      final prompt = (result['prompt'] as String).trim();
+      final skills = result['skills'] as List<String>? ?? [];
+
+      // Build the command
+      final buf = StringBuffer('hermes --accept-hooks cron create');
+      buf.write(' "${cronExpr.replaceAll(' ', ' ')}"');
+      if (prompt.isNotEmpty) {
+        buf.write(' ${_shellQuote(prompt)}');
+      }
+      buf.write(' --name ${_shellQuote(name)}');
+      for (final s in skills) {
+        buf.write(' --skill ${_shellQuote(s)}');
+      }
+
+      final shellCmd = buf.toString();
+      final cmdResult = await _cm.execBash('$shellCmd 2>&1');
+      final cmdOut = (cmdResult.stdout as String).trim();
+      if (cmdResult.exitCode != 0) {
+        throw Exception(cmdOut.isNotEmpty ? cmdOut : 'hermes --accept-hooks cron create failed');
+      }
+
+      await _loadJobs();
+
+      if (mounted) {
+        Navigator.pop(context); // 关闭加载弹窗
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('任务已创建')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // 关闭加载弹窗
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('创建失败: $e')),
+        );
+      }
+    }
+  }
+
+  /// Shell-escape a string for single-quote usage on Linux
+  String _shellQuote(String s) {
+    // Use single quotes, escape any single quotes inside
+    return "'${s.replaceAll("'", "'\\''")}'";
+  }
+
+  Future<void> _editJob(CronJob job) async {
+    final name = job.name;
+    final prompt = job.prompt;
+    final schedule = job.schedule;
+    final parts = schedule.split(' ');
+    final hour = parts.length > 1 ? int.tryParse(parts[1]) ?? 9 : 9;
+    final minute = parts.length > 0 ? int.tryParse(parts[0]) ?? 0 : 0;
+    final dayField = parts.length > 2 ? parts[2] : '*';
+    // Determine schedule type
+    String scheduleType;
+    if (dayField == '*') {
+      scheduleType = parts.length > 4 && parts[4] == '1-5' ? '工作日' : '每天';
+    } else {
+      scheduleType = '每月';
+    }
+    final dayOfMonth = int.tryParse(dayField) ?? 1;
+
+    // Reuse add dialog with pre-filled values
+    final result = await _showEditJobDialog(
+      initialName: name,
+      initialPrompt: prompt,
+      initialScheduleType: scheduleType,
+      initialHour: hour,
+      initialMinute: minute,
+      initialDayOfMonth: scheduleType == '每月' ? dayOfMonth : 1,
+      initialSkills: job.skillNames ?? [],
+    );
+    if (result == null || !mounted) return;
+
+    // Execute hermes cron edit
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('正在更新定时任务...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final cronExpr = switch (result['scheduleType'] as String) {
+        '每天' => '${result['minute']} ${result['hour']} * * *',
+        '工作日' => '${result['minute']} ${result['hour']} * * 1-5',
+        '每月' => '${result['minute']} ${result['hour']} ${result['dayOfMonth']} * *',
+        _ => '${result['minute']} ${result['hour']} * * *',
+      };
+
+      final newName = (result['name'] as String).trim();
+      final newPrompt = (result['prompt'] as String).trim();
+      final skills = result['skills'] as List<String>? ?? [];
+
+      final buf = StringBuffer('hermes --accept-hooks cron edit ${job.id}');
+      buf.write(' --schedule "$cronExpr"');
+      if (newName != name) {
+        buf.write(' --name ${_shellQuote(newName)}');
+      }
+      if (newPrompt != prompt) {
+        buf.write(' --prompt ${_shellQuote(newPrompt)}');
+      }
+      if (skills.isNotEmpty) {
+        buf.write(' --clear-skills');
+        for (final s in skills) {
+          buf.write(' --skill ${_shellQuote(s)}');
+        }
+      }
+
+      final shellCmd = buf.toString();
+      final cmdResult = await _cm.execBash('$shellCmd 2>&1');
+      final cmdOut = (cmdResult.stdout as String).trim();
+      if (cmdResult.exitCode != 0) {
+        throw Exception(cmdOut.isNotEmpty ? cmdOut : 'hermes cron edit failed');
+      }
+
+      await _loadJobs();
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('任务已更新')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('更新失败: $e')),
+        );
+      }
+    }
+  }
+
+  /// 编辑任务的弹窗 — 复用添加弹窗逻辑但预填现有值
+  Future<Map<String, dynamic>?> _showEditJobDialog({
+    required String initialName,
+    required String initialPrompt,
+    required String initialScheduleType,
+    required int initialHour,
+    required int initialMinute,
+    required int initialDayOfMonth,
+    required List<String> initialSkills,
+  }) async {
+    final nameController = TextEditingController(text: initialName);
+    final skillSearchController = TextEditingController();
+    final promptController = TextEditingController(text: initialPrompt);
+    String scheduleType = initialScheduleType;
+    int hour = initialHour;
+    int minute = initialMinute;
+    int dayOfMonth = initialDayOfMonth;
+    List<String> selectedSkills = List.from(initialSkills);
+    List<String> allSkills = [];
+
+    try {
+      final skills = await _configService.getSkills();
+      allSkills = skills.map((s) => s['name'] ?? '').where((n) => n.isNotEmpty).toList()..sort();
+    } catch (_) {}
+
+    return showDialog<Map<String, dynamic>>(
+      context: context,
+      useSafeArea: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final filteredSkills = allSkills.where((s) =>
+              skillSearchController.text.isEmpty ||
+              s.toLowerCase().contains(skillSearchController.text.toLowerCase())
+          ).toList();
+
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('编辑定时任务',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: '任务名称', hintText: '输入任务名称',
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: scheduleType,
+                    decoration: const InputDecoration(labelText: '执行时间', isDense: true),
+                    items: ['每天', '工作日', '每月', '自定义']
+                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => scheduleType = v!),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: hour,
+                          decoration: const InputDecoration(labelText: '小时', isDense: true),
+                          items: List.generate(24, (i) => DropdownMenuItem(
+                            value: i, child: Text(i.toString().padLeft(2, '0')),
+                          )),
+                          onChanged: (v) => setDialogState(() => hour = v!),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: minute,
+                          decoration: const InputDecoration(labelText: '分钟', isDense: true),
+                          items: List.generate(60, (i) => DropdownMenuItem(
+                            value: i, child: Text(i.toString().padLeft(2, '0')),
+                          )),
+                          onChanged: (v) => setDialogState(() => minute = v!),
+                        ),
+                      ),
+                      if (scheduleType == '每月') ...[
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: DropdownButtonFormField<int>(
+                            value: dayOfMonth,
+                            decoration: const InputDecoration(labelText: '日期', isDense: true),
+                            items: List.generate(28, (i) => DropdownMenuItem(
+                              value: i + 1, child: Text('${i + 1}日'),
+                            )),
+                            onChanged: (v) => setDialogState(() => dayOfMonth = v!),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('技能选择', style: TextStyle(fontSize: 13)),
+                  const SizedBox(height: 4),
+                  TextField(
+                    decoration: const InputDecoration(
+                      hintText: '搜索技能...', isDense: true,
+                      prefixIcon: Icon(Icons.search, size: 18),
+                    ),
+                    onChanged: (v) => setDialogState(() {}),
+                    controller: skillSearchController,
+                  ),
+                  const SizedBox(height: 4),
+                  if (selectedSkills.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Wrap(
+                        spacing: 6, runSpacing: 4,
+                        children: selectedSkills.map((skill) => Chip(
+                          label: Text(skill, style: const TextStyle(fontSize: 12)),
+                          deleteIcon: const Icon(Icons.close, size: 16),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          onDeleted: () => setDialogState(() => selectedSkills.remove(skill)),
+                        )).toList(),
+                      ),
+                    ),
+                  Container(
+                    height: 120,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: allSkills.isEmpty
+                        ? Center(
+                            child: Text('暂无可用技能',
+                                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)))
+                        : ListView(
+                            padding: EdgeInsets.zero,
+                            children: filteredSkills.map((skill) {
+                              final selected = selectedSkills.contains(skill);
+                              return CheckboxListTile(
+                                dense: true,
+                                visualDensity: VisualDensity.compact,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                                title: Text(skill, style: const TextStyle(fontSize: 13)),
+                                value: selected,
+                                onChanged: (v) {
+                                  setDialogState(() {
+                                    if (v == true) {
+                                      selectedSkills.add(skill);
+                                    } else {
+                                      selectedSkills.remove(skill);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: promptController,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: '执行描述',
+                      hintText: '输入任务执行描述',
+                      isDense: true,
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+                      const SizedBox(width: 12),
+                      FilledButton(
+                        onPressed: () {
+                          final name = nameController.text.trim();
+                          if (name.isEmpty) return;
+                          Navigator.pop(ctx, {
+                            'name': name,
+                            'scheduleType': scheduleType,
+                            'hour': hour,
+                            'minute': minute,
+                            'dayOfMonth': dayOfMonth,
+                            'skills': selectedSkills,
+                            'prompt': promptController.text.trim(),
+                          });
+                        },
+                        child: const Text('保存'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
         },
       ),
     );
   }
 
-  void _showEditDialog(CronJob job) {
-    showDialog(
-      context: context,
-      builder: (ctx) => _CronJobDialog(
-        existingJob: job,
-        onSaved: () {
-          _loadJobs();
-          Navigator.pop(ctx);
-        },
-      ),
-    );
-  }
-
-  String _relativeTime(DateTime? dt) {
-    if (dt == null) return '从未';
-    final diff = DateTime.now().difference(dt);
-    if (diff.inSeconds < 60) return '刚刚';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}分钟前';
-    if (diff.inHours < 24) return '${diff.inHours}小时前';
-    if (diff.inDays < 7) return '${diff.inDays}天前';
-    return '${dt.month}/${dt.day}';
+  String _describeSchedule(CronJob job) {
+    final s = job.schedule;
+    if (s.startsWith('0 ')) {
+      final parts = s.split(' ');
+      if (parts.length >= 3) {
+        final hour = parts[1];
+        final day = parts[2];
+        if (day == '*') return '每天 ${hour.padLeft(2, '0')}:00';
+        return '每月${day}日 ${hour.padLeft(2, '0')}:00';
+      }
+    }
+    return s;
   }
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('定时任务')),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showCreateDialog,
-        child: const Icon(Icons.add),
+      appBar: AppBar(
+        title: const Text('定时任务'),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadJobs, tooltip: '刷新'),
+          IconButton(icon: const Icon(Icons.add), onPressed: _showAddJobDialog, tooltip: '添加任务'),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _jobs.isEmpty
-              ? _buildEmpty()
-              : RefreshIndicator(
-                  onRefresh: _loadJobs,
-                  child: ListView.builder(
-                    padding: EdgeInsets.all(16),
-                    itemCount: _jobs.length,
-                    itemBuilder: (context, i) => _buildJobCard(_jobs[i]),
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.schedule_outlined, size: 48, color: cs.onSurfaceVariant),
+                      const SizedBox(height: 16),
+                      Text('暂无定时任务', style: TextStyle(color: cs.onSurfaceVariant)),
+                    ],
                   ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: _jobs.length,
+                  itemBuilder: (_, i) => _buildJobCard(_jobs[i], cs),
                 ),
     );
   }
 
-  Widget _buildEmpty() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.schedule_outlined,
-              size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
-          SizedBox(height: 16),
-          Text('暂无定时任务',
-              style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          SizedBox(height: 8),
-          Text('点击右下角 + 创建新任务',
-              style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildJobCard(CronJob job) {
+  Widget _buildJobCard(CronJob job, ColorScheme cs) {
+    final statusColor = job.isActive ? AppTheme.success : cs.onSurfaceVariant;
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -186,374 +793,86 @@ class _CronScreenState extends State<CronScreen> {
             Row(
               children: [
                 Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: job.isActive ? AppTheme.success : AppTheme.warning,
-                    shape: BoxShape.circle,
-                  ),
+                  width: 10, height: 10,
+                  decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
                 ),
-                SizedBox(width: 10),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    job.name,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Row(
+                    children: [
+                      Flexible(child: Text(job.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          job.isActive ? '运行中' : '已暂停',
+                          style: TextStyle(fontSize: 10, color: statusColor, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                Container(
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    job.schedule,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontFamily: 'monospace',
-                      color: AppTheme.secondary,
-                    ),
-                  ),
-                ),
+                Text(_describeSchedule(job), style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
               ],
             ),
-            const SizedBox(height: 12),
             if (job.prompt.isNotEmpty) ...[
-              Text(
-                job.prompt,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Colors.white54,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
+              Text(job.prompt, maxLines: 2, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
             ],
-            Row(
-              children: [
-                _buildInfoChip(Icons.history, '上次: ${_relativeTime(job.lastRunAt)}'),
-                if (job.nextRunAt != null) ...[
-                  const SizedBox(width: 16),
-                  _buildInfoChip(
-                      Icons.schedule, '下次: ${_relativeTime(job.nextRunAt)}'),
-                ],
-              ],
-            ),
+            if (job.skillNames != null && job.skillNames!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 4, runSpacing: 4,
+                children: job.skillNames!.map((s) =>
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.info.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(s, style: TextStyle(fontSize: 11, color: AppTheme.info)),
+                  ),
+                ).toList(),
+              ),
+            ],
             const SizedBox(height: 12),
-            Divider(),
-            const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                _buildActionChip(
-                  Icons.play_arrow,
-                  '执行',
-                  AppTheme.success,
-                  () => _runJob(job),
+                TextButton.icon(
+                  onPressed: () => _toggleJob(job),
+                  icon: Icon(job.isActive ? Icons.pause : Icons.play_arrow, size: 16),
+                  label: Text(job.isActive ? '暂停' : '启用', style: const TextStyle(fontSize: 12)),
                 ),
-                const SizedBox(width: 8),
-                _buildActionChip(
-                  job.isActive ? Icons.pause : Icons.play_arrow,
-                  job.isActive ? '暂停' : '恢复',
-                  AppTheme.warning,
-                  () => _toggleJob(job),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: () => _runJob(job),
+                  icon: const Icon(Icons.play_circle_outline, size: 16),
+                  label: const Text('立即执行', style: TextStyle(fontSize: 12)),
                 ),
-                const SizedBox(width: 8),
-                _buildActionChip(
-                  Icons.edit_outlined,
-                  '编辑',
-                  AppTheme.info,
-                  () => _showEditDialog(job),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: () => _editJob(job),
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: const Text('编辑', style: TextStyle(fontSize: 12)),
                 ),
-                SizedBox(width: 8),
-                _buildActionChip(
-                  Icons.delete_outline,
-                  '删除',
-                  AppTheme.error,
-                  () => _deleteJob(job),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: () => _deleteJob(job),
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('删除', style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(foregroundColor: AppTheme.error),
                 ),
               ],
             ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildInfoChip(IconData icon, String text) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
-        SizedBox(width: 4),
-        Text(
-          text,
-          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildActionChip(
-      IconData icon, String label, Color color, VoidCallback onTap) {
-    return Material(
-      color: color.withValues(alpha: 0.1),
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(fontSize: 12, color: color),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CronJobDialog extends StatefulWidget {
-  final CronJob? existingJob;
-  final VoidCallback onSaved;
-
-  const _CronJobDialog({this.existingJob, required this.onSaved});
-
-  @override
-  State<_CronJobDialog> createState() => _CronJobDialogState();
-}
-
-class _CronJobDialogState extends State<_CronJobDialog> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _nameController;
-  late final TextEditingController _scheduleController;
-  late final TextEditingController _promptController;
-  final _gateway = GatewayService();
-  final _configService = ConfigService();
-  List<Map<String, String>> _availableSkills = [];
-  List<String> _selectedSkills = [];
-  bool _skillsLoading = true;
-  String _selectedPreset = '';
-
-  static const _presets = [
-    ('每30分钟', '*/30 * * * *'),
-    ('每小时', '0 * * * *'),
-    ('每6小时', '0 */6 * * *'),
-    ('每天9点', '0 9 * * *'),
-    ('每天21点', '0 21 * * *'),
-    ('每周一9点', '0 9 * * 1'),
-    ('每月1日9点', '0 9 1 * *'),
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    final job = widget.existingJob;
-    _nameController = TextEditingController(text: job?.name ?? '');
-    _scheduleController = TextEditingController(text: job?.schedule ?? '0 9 * * *');
-    _promptController = TextEditingController(text: job?.prompt ?? '');
-    if (job?.skillNames != null) {
-      _selectedSkills = List.from(job!.skillNames!);
-    }
-    _loadSkills();
-  }
-
-  Future<void> _loadSkills() async {
-    try {
-      final skills = await _configService.getSkills();
-      setState(() {
-        _availableSkills = skills;
-        _skillsLoading = false;
-      });
-    } catch (_) {
-      setState(() => _skillsLoading = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _scheduleController.dispose();
-    _promptController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-    try {
-      final Map<String, dynamic> data = {
-        'name': _nameController.text.trim(),
-        'schedule': _scheduleController.text.trim(),
-        'prompt': _promptController.text.trim(),
-        'status': 'active',
-      };
-      if (_selectedSkills.isNotEmpty) {
-        data['skill_names'] = _selectedSkills;
-      }
-      if (widget.existingJob != null) {
-        await _gateway.updateCronJob(widget.existingJob!.id, data);
-      } else {
-        await _gateway.createCronJob(data);
-      }
-      widget.onSaved();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败: $e')),
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isEdit = widget.existingJob != null;
-    return AlertDialog(
-      title: Text(isEdit ? '编辑任务' : '新建任务'),
-      content: Form(
-        key: _formKey,
-        child: SizedBox(
-          width: 500,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(labelText: '任务名称'),
-                  validator: (v) =>
-                      v?.trim().isEmpty == true ? '请输入任务名称' : null,
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: _selectedPreset.isEmpty ? null : _selectedPreset,
-                        decoration: const InputDecoration(
-                          labelText: '常用定时',
-                          contentPadding: EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                        ),
-                        items: _presets.map((p) => DropdownMenuItem(
-                              value: p.$1,
-                              child: Text(p.$1, style: const TextStyle(fontSize: 14)),
-                            )).toList(),
-                        onChanged: (v) {
-                          if (v != null) {
-                            final preset = _presets.firstWhere((p) => p.$1 == v);
-                            setState(() {
-                              _selectedPreset = v;
-                              _scheduleController.text = preset.$2;
-                            });
-                          }
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _scheduleController,
-                        decoration: const InputDecoration(labelText: 'Cron 表达式'),
-                        validator: (v) =>
-                            v?.trim().isEmpty == true ? '请输入表达式' : null,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _promptController,
-                  decoration: const InputDecoration(
-                    labelText: '执行提示词',
-                    alignLabelWithHint: true,
-                  ),
-                  maxLines: 6,
-                  validator: (v) =>
-                      v?.trim().isEmpty == true ? '请输入提示词' : null,
-                ),
-                SizedBox(height: 16),
-                // 技能多选
-                InputDecorator(
-                  decoration: InputDecoration(
-                    labelText: '关联技能（可选）',
-                    border: OutlineInputBorder(),
-                  ),
-                  child: _skillsLoading
-                      ? SizedBox(
-                          height: 40,
-                          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-                        )
-                      : _availableSkills.isEmpty
-                          ? Text('未检测到已安装的技能',
-                              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13))
-                          : Wrap(
-                              spacing: 6,
-                              runSpacing: 4,
-                              children: _availableSkills.map((s) {
-                                final name = s['name'] ?? '';
-                                final desc = s['description'] ?? '';
-                                final selected = _selectedSkills.contains(name);
-                                return FilterChip(
-                                  label: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(name, style: TextStyle(fontSize: 12)),
-                                      if (desc.isNotEmpty) ...[
-                                        SizedBox(width: 4),
-                                        Text(desc,
-                                            style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis),
-                                      ],
-                                    ],
-                                  ),
-                                  selected: selected,
-                                  onSelected: (v) {
-                                    setState(() {
-                                      if (v) {
-                                        _selectedSkills.add(name);
-                                      } else {
-                                        _selectedSkills.remove(name);
-                                      }
-                                    });
-                                  },
-                                  selectedColor: AppTheme.primary.withValues(alpha: 0.3),
-                                  checkmarkColor: AppTheme.primary,
-                                  backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
-                                  labelStyle: TextStyle(
-                                    color: selected ? AppTheme.primary : Theme.of(context).colorScheme.onSurfaceVariant,
-                                    fontSize: 12,
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消')),
-        FilledButton(onPressed: _save, child: const Text('保存')),
-      ],
     );
   }
 }

@@ -2,13 +2,24 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/platform_config.dart';
+import 'connection_manager.dart';
 
 /// 直接读取 Hermes 配置文件
+/// 支持 local/remote 双模式，远程时通过 SSH 读取首尔服务器文件
 class ConfigService {
   final String hermesHome;
 
   ConfigService({String? hermesHome})
       : hermesHome = hermesHome ?? resolveHermesHome();
+
+  String _mode = 'local';
+
+  /// 切换连接模式
+  void setMode(String mode) {
+    _mode = mode;
+  }
+
+  bool get _isRemote => _mode != 'local';
 
   static String resolveHermesHome() {
     // 优先环境变量
@@ -33,8 +44,9 @@ class ConfigService {
       if (Directory(winPath).existsSync()) return winPath;
     }
 
-    // 最后 fallback
-    return '/home/tian/.hermes';
+    // 最后 fallback：使用 HOME 环境变量
+    if (home != null && home.isNotEmpty) return '$home/.hermes';
+    return '~/.hermes';
   }
 
   String get configPath => '$hermesHome/config.yaml';
@@ -89,6 +101,14 @@ class ConfigService {
   }
 
   Future<String> readConfig() async {
+    if (_isRemote) {
+      try {
+        final result = await ConnectionManager().execRemote('cat /home/ubuntu/.hermes/config.yaml');
+        return result.isEmpty ? '配置文件不存在' : result;
+      } catch (_) {
+        return '配置文件不存在';
+      }
+    }
     try {
       final file = File(configPath);
       if (await file.exists()) {
@@ -101,6 +121,7 @@ class ConfigService {
   }
 
   Future<bool> writeConfig(String content) async {
+    if (_isRemote) return false; // 远程模式只读
     try {
       await File(configPath).writeAsString(content);
       return true;
@@ -150,6 +171,14 @@ class ConfigService {
 
   /// 读取 .env 文件的原始内容
   Future<String> readEnvFile() async {
+    if (_isRemote) {
+      try {
+        final result = await ConnectionManager().execRemote('cat /home/ubuntu/.hermes/.env');
+        return result.isEmpty ? '# 环境变量文件为空\n' : result;
+      } catch (_) {
+        return '# 环境变量文件为空\n';
+      }
+    }
     try {
       final file = File(envPath);
       if (await file.exists()) {
@@ -163,6 +192,7 @@ class ConfigService {
 
   /// 写入 .env 文件
   Future<bool> writeEnvFile(String content) async {
+    if (_isRemote) return false;
     try {
       await File(envPath).writeAsString(content);
       return true;
@@ -172,6 +202,24 @@ class ConfigService {
   }
 
   Future<Map<String, Map<String, String>>> getAuthProviders() async {
+    if (_isRemote) {
+      try {
+        final content = await ConnectionManager().execRemote('cat /home/ubuntu/.hermes/auth.json');
+        if (content.isEmpty) return {};
+        final json = jsonDecode(content);
+        if (json is! Map) return {};
+        final providers = <String, Map<String, String>>{};
+        json.forEach((key, value) {
+          if (value is Map) {
+            providers[key.toString()] =
+                value.map((k, v) => MapEntry(k.toString(), v.toString()));
+          }
+        });
+        return providers;
+      } catch (_) {
+        return {};
+      }
+    }
     final providers = <String, Map<String, String>>{};
     try {
       final file = File(authPath);
@@ -193,6 +241,9 @@ class ConfigService {
 
   /// 读取已安装的技能列表
   Future<List<Map<String, String>>> getSkills() async {
+    if (_isRemote) {
+      return _getRemoteSkills();
+    }
     final skills = <Map<String, String>>[];
     try {
       final skillsDir = Directory('$hermesHome/skills');
@@ -225,6 +276,35 @@ class ConfigService {
     return skills;
   }
 
+  /// 通过 SSH 读取远程技能列表
+  Future<List<Map<String, String>>> _getRemoteSkills() async {
+    final skills = <Map<String, String>>[];
+    try {
+      final cm = ConnectionManager();
+      final catsOut = await cm.execRemote('ls -1 /home/ubuntu/.hermes/skills/ 2>/dev/null || true');
+      final categories = catsOut.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+      for (final cat in categories) {
+        final skillsOut = await cm.execRemote('ls -1 /home/ubuntu/.hermes/skills/$cat/ 2>/dev/null || true');
+        final skillNames = skillsOut.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+        for (final skillName in skillNames) {
+          final mdContent = await cm.execRemote('cat /home/ubuntu/.hermes/skills/$cat/$skillName/SKILL.md 2>/dev/null || true');
+          if (mdContent.isEmpty) continue;
+          final name = _extractYamlField(mdContent, 'name') ?? skillName;
+          final desc = _extractYamlField(mdContent, 'description') ?? '';
+          final version = _extractYamlField(mdContent, 'version') ?? '';
+          skills.add({
+            'name': name,
+            'description': desc,
+            'version': version,
+            'path': '/home/ubuntu/.hermes/skills/$cat/$skillName',
+          });
+        }
+      }
+    } catch (_) {}
+    skills.sort((a, b) => a['name']!.compareTo(b['name']!));
+    return skills;
+  }
+
   /// 解析 SKILL.md 的 YAML 字段
   String? _extractYamlField(String content, String field) {
     final lines = content.split('\n');
@@ -244,20 +324,35 @@ class ConfigService {
   Future<List<PlatformConfig>> getPlatformConfigs() async {
     // 从 config.yaml 中解析平台配置
     final config = await readConfig();
+    // 微信凭证存在 .env 里（WEIXIN_ACCOUNT_ID/TOKEN），额外读取
+    final env = await getEnvVars();
+    final hasWechatEnv = (env['WEIXIN_ACCOUNT_ID'] ?? '').isNotEmpty &&
+        (env['WEIXIN_TOKEN'] ?? '').isNotEmpty;
+
     final platforms = <PlatformConfig>[];
     final platformNames = [
       'telegram', 'discord', 'slack', 'whatsapp',
       'feishu', 'wecom', 'matrix', 'wechat',
+      'signal', 'email', 'dingtalk', 'qqbot',
+      'homeassistant', 'webhook', 'sms', 'mattermost',
+      'yuanbao',
     ];
 
     for (final name in platformNames) {
-      final configured = config.contains('$name:') && !config.contains('$name: {}');
-      final hasToken = config.contains('token') || config.contains('app_id') || config.contains('secret');
+      bool configured;
+      if (name == 'wechat') {
+        configured = hasWechatEnv;
+      } else {
+        configured = config.contains('$name:') && !config.contains('$name: {}');
+        if (configured) {
+          configured = config.contains('token') || config.contains('app_id') || config.contains('secret');
+        }
+      }
       final displayName = _platformDisplayName(name);
       platforms.add(PlatformConfig(
         name: displayName,
-        configured: configured && hasToken,
-        status: configured && hasToken ? 'connected' : 'disconnected',
+        configured: configured,
+        status: configured ? 'connected' : 'disconnected',
       ));
     }
 
@@ -265,6 +360,14 @@ class ConfigService {
   }
 
   Future<String> getLogContent(String source, {int lines = 200}) async {
+    if (_isRemote) {
+      try {
+        final result = await ConnectionManager().execRemote('tail -n $lines /home/ubuntu/.hermes/logs/$source.log 2>/dev/null || echo "日志文件不存在"');
+        return result.isEmpty ? '日志文件不存在' : result;
+      } catch (_) {
+        return '日志文件不存在';
+      }
+    }
     try {
       final file = File('$logsDir/$source.log');
       if (await file.exists()) {
@@ -291,6 +394,15 @@ class ConfigService {
       case 'wecom': return '企业微信';
       case 'matrix': return 'Matrix';
       case 'wechat': return '微信';
+      case 'signal': return 'Signal';
+      case 'email': return '邮件';
+      case 'dingtalk': return '钉钉';
+      case 'qqbot': return 'QQ 机器人';
+      case 'homeassistant': return 'Home Assistant';
+      case 'webhook': return 'Webhook';
+      case 'sms': return 'SMS';
+      case 'mattermost': return 'Mattermost';
+      case 'yuanbao': return '元宝';
       default: return name;
     }
   }

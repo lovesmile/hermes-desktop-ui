@@ -9,6 +9,7 @@ class StatsCard extends StatelessWidget {
   final String? trend;
   final bool trendUp;
   final VoidCallback? onTap;
+  final double fontScale;
 
   const StatsCard({
     super.key,
@@ -19,6 +20,7 @@ class StatsCard extends StatelessWidget {
     this.trend,
     this.trendUp = true,
     this.onTap,
+    this.fontScale = 1.0,
   });
 
   @override
@@ -71,7 +73,7 @@ class StatsCard extends StatelessWidget {
               Text(
                 value,
                 style: TextStyle(
-                  fontSize: 28,
+                  fontSize: 28 * fontScale,
                   fontWeight: FontWeight.bold,
                   color: accentColor,
                 ),
@@ -82,7 +84,7 @@ class StatsCard extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 13 * fontScale,
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),

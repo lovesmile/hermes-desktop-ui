@@ -3,30 +3,78 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/config_service.dart';
+import 'chat_screen.dart';
 
 /// Provider → 可选模型列表
 const Map<String, List<String>> providerModels = {
-  'deepseek': ['deepseek-v4-flash', 'deepseek-v3', 'deepseek-r1'],
-  'openrouter': [
-    'anthropic/claude-sonnet-4', 'anthropic/claude-opus-4',
-    'openai/gpt-4o', 'openai/gpt-4o-mini',
-    'google/gemini-2.5-pro', 'google/gemini-2.5-flash',
-    'deepseek/deepseek-v4-flash', 'deepseek/deepseek-v3',
-    'meta-llama/llama-4', 'cohere/command-r7',
+  'deepseek': [
+    'deepseek-v4-flash', 'deepseek-v3', 'deepseek-r1',
+    'deepseek-r1-distill-qwen-32b',
   ],
-  'anthropic': ['claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4'],
-  'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'o3', 'o4-mini'],
-  'gemini': ['gemini-2.5-pro', 'gemini-2.5-flash'],
-  'kimi': ['kimi-k2.5'],
-  'ollama': ['llama-3.3-70b', 'qwen-2.5-72b', 'mistral-large'],
-  'glm': ['glm-4-plus', 'glm-4-air'],
-  'minimax': ['minimax-m2.5'],
-  'arcee': ['trinity-mini', 'trinity-large'],
-  'opencode-zen': ['gpt-4o', 'claude-sonnet-4', 'gemini-2.5-pro'],
-  'opencode-go': ['glm-5', 'kimi-k2.5', 'minimax-m2.5'],
-  'huggingface': ['meta-llama/Llama-4', 'mistralai/Mistral-Large'],
-  'qwen': ['qwen-max', 'qwen-plus'],
-  'xiaomi': ['mimo-v2-pro', 'mimo-v2-flash', 'mimo-v2-omni'],
+  'openrouter': [
+    'anthropic/claude-sonnet-4', 'anthropic/claude-opus-4', 'anthropic/claude-haiku-4',
+    'openai/gpt-4o', 'openai/gpt-4o-mini', 'openai/gpt-4.1', 'openai/o3', 'openai/o4-mini',
+    'google/gemini-2.5-pro', 'google/gemini-2.5-flash',
+    'deepseek/deepseek-v4-flash', 'deepseek/deepseek-v3', 'deepseek/deepseek-r1',
+    'meta-llama/llama-4', 'meta-llama/llama-3.3-70b',
+    'cohere/command-r7', 'cohere/command-r-plus',
+    'mistralai/mistral-large', 'mistralai/mistral-saba',
+    'qwen/qwen-max', 'qwen/qwen-plus',
+  ],
+  'anthropic': [
+    'claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4',
+    'claude-sonnet-4-20250514', 'claude-opus-4-20250514',
+  ],
+  'openai': [
+    'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-nano',
+    'o3', 'o3-mini', 'o4-mini',
+    'gpt-4.1-2025-04-14', 'gpt-4o-2024-08-06',
+  ],
+  'gemini': [
+    'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
+    'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash',
+  ],
+  'kimi': [
+    'kimi-k2.5', 'kimi-k2', 'kimi-v1.5',
+  ],
+  'ollama': [
+    'llama-3.3-70b', 'llama-3.1-8b', 'qwen-2.5-72b', 'qwen-2.5-32b',
+    'mistral-large', 'mixtral-8x22b', 'deepseek-r1-70b',
+    'gemma-3-27b', 'phi-4', 'nomic-embed-text',
+  ],
+  'glm': [
+    'glm-4-plus', 'glm-4-air', 'glm-4-long', 'glm-4-flash',
+    'glm-5', 'glm-5-flash',
+  ],
+  'minimax': [
+    'minimax-m2.5', 'minimax-m1', 'minimax-text-01',
+  ],
+  'arcee': [
+    'trinity-mini', 'trinity-large', 'trinity-medium',
+    'arcee-neo', 'arcee-7b',
+  ],
+  'opencode-zen': [
+    'gpt-4o', 'claude-sonnet-4', 'gemini-2.5-pro',
+    'deepseek-v4-flash', 'qwen-max',
+  ],
+  'opencode-go': [
+    'glm-5', 'kimi-k2.5', 'minimax-m2.5',
+    'qwen-plus', 'deepseek-v3',
+  ],
+  'huggingface': [
+    'meta-llama/Llama-4', 'meta-llama/Llama-3.3-70B-Instruct',
+    'mistralai/Mistral-Large', 'mistralai/Mistral-Saba',
+    'Qwen/Qwen2.5-72B-Instruct', 'deepseek-ai/DeepSeek-R1',
+    'google/gemma-3-27b-it',
+  ],
+  'qwen': [
+    'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-long',
+    'qwen-max-2026-01-25',
+  ],
+  'xiaomi': [
+    'mimo-v2-pro', 'mimo-v2-flash', 'mimo-v2-omni',
+    'mimo-v2-vision',
+  ],
 };
 
 /// Provider → 默认 Base URL
@@ -55,7 +103,9 @@ const allProviders = [
 ];
 
 class ModelsScreen extends StatefulWidget {
-  const ModelsScreen({super.key});
+  final void Function(int index) onNavigate;
+
+  const ModelsScreen({super.key, required this.onNavigate});
 
   @override
   State<ModelsScreen> createState() => _ModelsScreenState();
@@ -234,75 +284,108 @@ class _ModelsScreenState extends State<ModelsScreen> {
                       ),
                     )
                   else
-                    ..._skills.map((skill) => Card(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 36,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.secondary
-                                        .withValues(alpha: 0.15),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Icon(Icons.auto_awesome,
-                                      size: 18,
-                                      color: AppTheme.secondary),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                    ..._skills.map((skill) => GestureDetector(
+                          onSecondaryTapUp: (details) {
+                            showMenu<String>(
+                              context: context,
+                              position: RelativeRect.fromLTRB(
+                                details.globalPosition.dx,
+                                details.globalPosition.dy,
+                                details.globalPosition.dx + 1,
+                                details.globalPosition.dy + 1,
+                              ),
+                              items: [
+                                PopupMenuItem(
+                                  value: 'invoke',
+                                  child: Row(
                                     children: [
-                                      Text(
-                                        skill['name'] ?? '',
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      if ((skill['description'] ?? '')
-                                          .isNotEmpty)
-                                        Padding(
-                                          padding:
-                                              const EdgeInsets.only(top: 4),
-                                          child: Text(
-                                            skill['description'] ?? '',
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                            ),
-                                          ),
-                                        ),
+                                      Icon(Icons.play_arrow, size: 16, color: AppTheme.primary),
+                                      const SizedBox(width: 8),
+                                      const Text('调用'),
                                     ],
                                   ),
                                 ),
-                                if ((skill['version'] ?? '').isNotEmpty)
+                              ],
+                            ).then((value) {
+                              if (value == 'invoke') {
+                                final skillName = skill['name'] ?? '';
+                                if (skillName.isNotEmpty) {
+                                  ChatScreen.skillInvocationNotifier.value = skillName;
+                                  widget.onNavigate(1);
+                                }
+                              }
+                            });
+                          },
+                          child: Card(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Row(
+                                children: [
                                   Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 4),
+                                    width: 36,
+                                    height: 36,
                                     decoration: BoxDecoration(
-                                      color: Colors.white
-                                          .withValues(alpha: 0.06),
-                                      borderRadius:
-                                          BorderRadius.circular(6),
+                                      color: AppTheme.secondary
+                                          .withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(8),
                                     ),
-                                    child: Text(
-                                      'v${skill['version']}',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                        fontFamily: 'monospace',
-                                      ),
+                                    child: Icon(Icons.auto_awesome,
+                                        size: 18,
+                                        color: AppTheme.secondary),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          skill['name'] ?? '',
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        if ((skill['description'] ?? '')
+                                            .isNotEmpty)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 4),
+                                            child: Text(
+                                              skill['description'] ?? '',
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   ),
-                              ],
+                                  if ((skill['version'] ?? '').isNotEmpty)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white
+                                            .withValues(alpha: 0.06),
+                                        borderRadius:
+                                            BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        'v${skill['version']}',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                          fontFamily: 'monospace',
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                         )),

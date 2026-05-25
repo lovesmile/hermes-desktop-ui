@@ -1,26 +1,28 @@
-import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
-import '../services/gateway_service.dart';
+import '../services/connection_manager.dart';
 import '../services/local_db.dart';
 import '../services/config_service.dart';
+import '../services/hermes_file_service.dart';
 import '../widgets/stats_card.dart';
 
 class DashboardScreen extends StatefulWidget {
   final void Function(int index)? onNavigate;
+  final ValueNotifier<int>? tabNotifier;
 
-  const DashboardScreen({super.key, this.onNavigate});
+  const DashboardScreen({super.key, this.onNavigate, this.tabNotifier});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final _gateway = GatewayService();
+  final _cm = ConnectionManager();
   final _configService = ConfigService();
   final _localDb = LocalDatabase();
-  bool _gatewayOnline = false;
-  bool _loading = true;
+  final _fileService = HermesFileService();
+  bool _dashboardLoading = false;
 
   int _sessionCount = 0;
   int _skillCount = 0;
@@ -28,48 +30,81 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _currentModel = '-';
   String _currentProvider = '-';
 
+  // 文件数 — 暂时禁用
+  int _fileCount = 0;
+  int _cronCount = 0;
+  String _homePath = '';
+
+  // 机器状态 — 暂时禁用
+  Map<String, dynamic>? _machineStatus;
+  // Token 用量 — 暂时禁用
+  Map<String, int>? _tokenUsage;
+
   @override
   void initState() {
     super.initState();
     _loadData();
+    widget.tabNotifier?.addListener(_onTabChanged);
+    _cm.stateNotifier.addListener(_onConnectionChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.tabNotifier?.removeListener(_onTabChanged);
+    _cm.stateNotifier.removeListener(_onConnectionChanged);
+    super.dispose();
+  }
+
+  void _onConnectionChanged() {
+    if (_cm.state.status == ConnStatus.connected) {
+      _loadData();
+    }
+  }
+
+  void _onTabChanged() {
+    if (widget.tabNotifier?.value == 0) {
+      _loadData();
+    }
   }
 
   Future<void> _loadData() async {
-    setState(() => _loading = true);
+    setState(() => _dashboardLoading = true);
     try {
-      await _gateway.refreshBaseUrl();
-      final online = await _gateway.checkHealth();
-
-      final hermesHome = ConfigService.resolveHermesHome();
-
-      // 从本地数据库读取会话数
       final localSessions = await _localDb.getSessions();
       int sessions = localSessions.length;
 
-      final skills = await _configService.getSkills();
+      final skillsCount = await _fileService.countSkills();
 
-      int logBytes = 0;
-      final logDir = Directory('$hermesHome/logs');
-      if (await logDir.exists()) {
-        await for (final f in logDir.list()) {
-          if (f is File) logBytes += await f.length();
-        }
+      // 日志总大小
+      final logsSize = await _fileService.getLogsSize();
+
+      // 文件数
+      int fileCount = 0;
+      final hermesHome = await _fileService.resolveHermesHome();
+      final filesDir = '$hermesHome/files';
+      if (await _fileService.dirExists(filesDir)) {
+        fileCount = (await _fileService.listFiles(filesDir)).length;
       }
 
-      // 只读 model: 段下的 provider
+      // 解析 home 路径
+      final homePath = await _fileService.resolveHermesHome();
+
+      // 定时任务数 — 从 config.yaml 解析 cron 段
+      int cronCount = 0;
       final config = await _configService.readConfig();
       String model = '-';
       String provider = '-';
-      String? configSection;
+      bool inCron = false;
+      String? currentSection;
       for (final line in config.split('\n')) {
-        final indent = line.length - line.trimLeft().length;
         final t = line.trim();
         if (t.isEmpty || t.startsWith('#')) continue;
-        if (indent == 0 && t.endsWith(':') && !t.startsWith('-')) {
-          configSection = t.substring(0, t.length - 1);
+        if (line.length - line.trimLeft().length == 0 && t.endsWith(':') && !t.startsWith('-')) {
+          currentSection = t.substring(0, t.length - 1);
+          inCron = (currentSection == 'cron');
           continue;
         }
-        if (configSection == 'model' && indent > 0) {
+        if (currentSection == 'model' && !inCron && line.length - line.trimLeft().length > 0) {
           if (t.startsWith('default:')) {
             final sep = t.indexOf(':');
             model = t.substring(sep + 1).trim();
@@ -78,27 +113,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
             provider = t.substring(sep + 1).trim();
           }
         }
+        if (inCron && line.length - line.trimLeft().length > 0 && t.startsWith('- ')) {
+          cronCount++;
+        }
       }
+
+      // 从 cron/jobs.json 获取定时任务数（fallback）
+      if (cronCount == 0) {
+        try {
+          final result = await _cm.execBash('cat ~/.hermes/cron/jobs.json 2>/dev/null');
+          final stdout = (result.stdout as String).trim();
+          if (stdout.isNotEmpty) {
+            final json = jsonDecode(stdout);
+            if (json is Map && json['jobs'] is List) {
+              cronCount = (json['jobs'] as List).length;
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 获取机器状态 — 暂时禁用
+      Map<String, dynamic>? machineStatus;
+      // 获取 Token 用量 — 暂时禁用
+      Map<String, int>? tokenUsage;
 
       if (mounted) {
         setState(() {
-          _gatewayOnline = online;
           _sessionCount = sessions;
-          _skillCount = skills.length;
-          _logSizeKb = logBytes ~/ 1024;
+          _skillCount = skillsCount;
+          _logSizeKb = logsSize ~/ 1024;
           _currentModel = model;
           _currentProvider = provider;
-          _loading = false;
+          _fileCount = fileCount;
+          _cronCount = cronCount;
+          _homePath = homePath;
+          _machineStatus = machineStatus;
+          _tokenUsage = tokenUsage;
+          _dashboardLoading = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _gatewayOnline = false;
-          _loading = false;
+          _dashboardLoading = false;
         });
         Future.delayed(const Duration(seconds: 3), () {
-          if (mounted && !_gatewayOnline) _loadData();
+          if (mounted) _loadData();
         });
       }
     }
@@ -107,12 +167,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final isOnline = _cm.state.status == ConnStatus.connected;
     return Scaffold(
       appBar: AppBar(
         title: const Text('仪表盘'),
         actions: [
-          _buildStatusChip(),
-          const SizedBox(width: 12),
+          // ── 在线状态指示器 ──
+          _buildStatusIndicator(cs),
+          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadData,
@@ -121,243 +183,241 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _loadData,
-        child: _loading
-            ? Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(color: AppTheme.primary),
-                    const SizedBox(height: 16),
-                    Text('加载中...', style: TextStyle(color: cs.onSurfaceVariant)),
-                  ],
-                ),
-              )
-            : !_gatewayOnline
-                ? _buildOffline(cs)
-                : SingleChildScrollView(
+      body: !isOnline
+          ? _buildOffline(cs)
+          : SingleChildScrollView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.all(24),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 统计卡片 — IntrinsicHeight 保证等高
-                        IntrinsicHeight(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Flexible(
-                                flex: 1,
-                                child: StatsCard(
-                                  icon: Icons.chat_bubble_outline,
-                                  value: '$_sessionCount',
-                                  label: '总会话数',
-                                  color: AppTheme.primary,
-                                  onTap: () => widget.onNavigate?.call(1),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Flexible(
-                                flex: 1,
-                                child: StatsCard(
-                                  icon: Icons.auto_awesome,
-                                  value: '$_skillCount',
-                                  label: '已装技能',
-                                  color: AppTheme.info,
-                                  onTap: () => widget.onNavigate?.call(5),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Flexible(
-                                flex: 1,
-                                child: StatsCard(
-                                  icon: Icons.article_outlined,
-                                  value: '$_logSizeKb KB',
-                                  label: '日志大小',
-                                  color: AppTheme.secondary,
-                                  onTap: () => widget.onNavigate?.call(4),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Flexible(
-                                flex: 1,
-                                child: StatsCard(
-                                  icon: Icons.wifi,
-                                  value: _gatewayOnline ? '在线' : '离线',
-                                  label: 'Gateway',
-                                  color: _gatewayOnline
-                                      ? AppTheme.success
-                                      : AppTheme.error,
-                                  onTap: () => widget.onNavigate?.call(6),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 32),
+                        // ── 统计行: 6 卡片合并为单行，字体自适应宽度 ──
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final double availableWidth = constraints.maxWidth;
+                            const int cardCount = 6;
+                            final double gapWidth = (cardCount - 1) * 12.0;
+                            final double cardWidth = (availableWidth - gapWidth) / cardCount;
+                            final double fontScale = (cardWidth / 200).clamp(0.6, 1.2);
 
-                        // 当前模型配置
+                            return IntrinsicHeight(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Flexible(
+                                    flex: 1,
+                                    child: StatsCard(
+                                      icon: Icons.chat_bubble_outline,
+                                      value: '$_sessionCount',
+                                      label: '总会话数',
+                                      color: AppTheme.primary,
+                                      fontScale: fontScale,
+                                      onTap: () => widget.onNavigate?.call(1),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Flexible(
+                                    flex: 1,
+                                    child: StatsCard(
+                                      icon: Icons.auto_awesome,
+                                      value: '$_skillCount',
+                                      label: '已装技能',
+                                      color: AppTheme.info,
+                                      fontScale: fontScale,
+                                      onTap: () => widget.onNavigate?.call(5),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Flexible(
+                                    flex: 1,
+                                    child: StatsCard(
+                                      icon: Icons.article_outlined,
+                                      value: '$_logSizeKb KB',
+                                      label: '日志大小',
+                                      color: AppTheme.secondary,
+                                      fontScale: fontScale,
+                                      onTap: () => widget.onNavigate?.call(4),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Flexible(
+                                    flex: 1,
+                                    child: StatsCard(
+                                      icon: Icons.schedule_outlined,
+                                      value: '$_cronCount',
+                                      label: '定时任务',
+                                      color: AppTheme.secondary,
+                                      fontScale: fontScale,
+                                      onTap: () => widget.onNavigate?.call(3),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Flexible(
+                                    flex: 1,
+                                    child: StatsCard(
+                                      icon: Icons.folder_outlined,
+                                      value: '~',
+                                      label: '文件浏览',
+                                      color: AppTheme.info,
+                                      fontScale: fontScale,
+                                      onTap: () => widget.onNavigate?.call(6),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Flexible(
+                                    flex: 1,
+                                    child: StatsCard(
+                                      icon: Icons.settings_outlined,
+                                      value: '',
+                                      label: '设置',
+                                      color: AppTheme.warning,
+                                      fontScale: fontScale,
+                                      onTap: () => widget.onNavigate?.call(7),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 16),
+
+                        // ═══════════════════════════════════════════════
+                        //  模型配置
+                        // ═══════════════════════════════════════════════
                         Card(
                           child: Padding(
-                            padding: const EdgeInsets.all(20),
+                            padding: const EdgeInsets.all(16),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text('模型配置',
                                     style: TextStyle(
-                                        fontSize: 16,
+                                        fontSize: 14,
                                         fontWeight: FontWeight.w600,
                                         color: cs.onSurface)),
-                                const SizedBox(height: 16),
+                                const SizedBox(height: 12),
                                 _infoRow('当前模型', _currentModel, cs),
                                 _infoRow('Provider', _currentProvider, cs),
-                                _infoRow('Gateway', _gateway.baseUrl, cs),
+                                _infoRow('Gateway', _cm.gatewayUrl, cs),
                               ],
                             ),
                           ),
                         ),
                         const SizedBox(height: 24),
-
-                        // 快捷导航
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(20),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('快捷导航',
-                                    style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        color: cs.onSurface)),
-                                const SizedBox(height: 16),
-                                Wrap(
-                                  spacing: 12,
-                                  runSpacing: 12,
-                                  children: [
-                                    _quickAction(
-                                      Icons.chat_outlined,
-                                      '会话历史',
-                                      AppTheme.primary,
-                                      () => widget.onNavigate?.call(1),
-                                    ),
-                                    _quickAction(
-                                      Icons.auto_awesome,
-                                      '技能列表',
-                                      AppTheme.info,
-                                      () => widget.onNavigate?.call(5),
-                                    ),
-                                    _quickAction(
-                                      Icons.schedule_outlined,
-                                      '定时任务',
-                                      AppTheme.secondary,
-                                      () => widget.onNavigate?.call(3),
-                                    ),
-                                    _quickAction(
-                                      Icons.settings_outlined,
-                                      '设置',
-                                      AppTheme.warning,
-                                      () => widget.onNavigate?.call(6),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  '也可使用左侧导航栏切换页面',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: cs.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-
-                        // API Server 状态
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(20),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('API Server 状态',
-                                    style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        color: cs.onSurface)),
-                                const SizedBox(height: 16),
-                                Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 10, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color: (_gatewayOnline
-                                                ? AppTheme.success
-                                                : AppTheme.error)
-                                            .withValues(alpha: 0.15),
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Text(
-                                        _gatewayOnline ? '运行中' : '未运行',
-                                        style: TextStyle(
-                                          color: _gatewayOnline
-                                              ? AppTheme.success
-                                              : AppTheme.error,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Text(
-                                      _gateway.baseUrl,
-                                      style: TextStyle(
-                                        fontFamily: 'monospace',
-                                        color: cs.onSurfaceVariant,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
                       ],
                     ),
                   ),
+                );
+  }
+
+  // ═══════════════════════════════════════════════
+  //  在线状态指示器
+  // ═══════════════════════════════════════════════
+
+  Widget _buildStatusIndicator(ColorScheme cs) {
+    final status = _cm.state.status;
+    Color dotColor;
+    String label;
+
+    switch (status) {
+      case ConnStatus.connected:
+        dotColor = AppTheme.success;
+        label = '在线';
+      case ConnStatus.connecting:
+        dotColor = AppTheme.warning;
+        label = '连接中...';
+      case ConnStatus.disconnected:
+        dotColor = cs.error;
+        label = '离线';
+      case ConnStatus.error:
+        dotColor = cs.error;
+        label = '错误';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_dashboardLoading)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: SizedBox(
+                width: 14, height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary),
+              ),
+            ),
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: dotColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: dotColor,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildStatusChip() {
-    final color = _gatewayOnline ? AppTheme.success : AppTheme.error;
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8, height: 8,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              _gatewayOnline ? '在线' : '离线',
-              style: TextStyle(fontSize: 13, color: color, fontWeight: FontWeight.w500),
-            ),
-          ],
-        ),
-      ),
-    );
+  // ═══════════════════════════════════════════════
+  //  机器状态格式化（inline，适配 getMachineStatus 返回格式）
+  // ═══════════════════════════════════════════════
+
+  /// 格式化 CPU（来自 getMachineStatus 的 cpu 字段）
+  String _formatMachineCpu(dynamic cpu) {
+    if (cpu == null) return '-';
+    if (cpu is num) return '${cpu.toStringAsFixed(1)}%';
+    return cpu.toString();
   }
+
+  /// 格式化内存（来自 getMachineStatus 的 memory 字段，值为 MB）
+  String _formatMachineMemory(dynamic memory) {
+    if (memory == null) return '-';
+    if (memory is Map) {
+      final used = memory['used'];
+      final total = memory['total'];
+      if (used is num && total is num) {
+        // 值以 MB 为单位 → 转 GB
+        return '${(used / 1024).toStringAsFixed(1)} GB / ${(total / 1024).toStringAsFixed(1)} GB';
+      }
+      return '${_fmt(used)} / ${_fmt(total)}';
+    }
+    return memory.toString();
+  }
+
+  /// 格式化磁盘（来自 getMachineStatus 的 disk 字段，值为 df -h 的字符串）
+  String _formatMachineDisk(dynamic disk) {
+    if (disk == null) return '-';
+    if (disk is Map) {
+      return '${_fmt(disk['used'])} / ${_fmt(disk['total'])}';
+    }
+    return disk.toString();
+  }
+
+  /// 格式化运行时间（来自 getMachineStatus 的 uptime 字段，值为 uptime -p 的字符串）
+  String _formatMachineUptime(dynamic uptime) {
+    if (uptime == null) return '-';
+    // uptime -p 已经返回 "up X days" 格式
+    return uptime.toString();
+  }
+
+  // ═══════════════════════════════════════════════
+  //  格式化辅助方法
+  // ═══════════════════════════════════════════════
+
+  /// 安全转字符串，null → "-"
+  String _fmt(Object? value) => value?.toString() ?? '-';
 
   Widget _buildOffline(ColorScheme cs) {
     return Center(
@@ -384,11 +444,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _infoRow(String label, String value, ColorScheme cs) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
           SizedBox(
-            width: 120,
+            width: 100,
             child: Text(label,
                 style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
           ),
@@ -397,33 +457,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 style: TextStyle(fontSize: 13, fontFamily: 'monospace', color: cs.onSurface)),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _quickAction(
-      IconData icon, String label, Color color, VoidCallback onTap) {
-    return Material(
-      color: color.withValues(alpha: 0.1),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 18, color: color),
-              const SizedBox(width: 8),
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 14,
-                      color: color,
-                      fontWeight: FontWeight.w500)),
-            ],
-          ),
-        ),
       ),
     );
   }

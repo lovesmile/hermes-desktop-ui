@@ -4,8 +4,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'config/theme.dart';
 import 'services/config_service.dart';
+import 'services/connection_manager.dart';
+import 'services/gateway_service.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/platforms_screen.dart';
@@ -13,21 +17,36 @@ import 'screens/cron_screen.dart';
 import 'screens/logs_screen.dart';
 import 'screens/models_screen.dart';
 import 'screens/settings_screen.dart';
-import 'screens/models_screen.dart' as ms; // Provider数据
+import 'screens/setup_screen.dart';
+import 'screens/file_browser_screen.dart';
+import 'screens/models_screen.dart' as ms;
+import 'services/snack_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ★ 设置默认窗口大小（1280×800，使仪表盘一次性全显示）
   await windowManager.ensureInitialized();
-  await windowManager.setMinimumSize(const Size(1080, 720));
-  await windowManager.setSize(const Size(1280, 800));
-  await windowManager.center();
+
+  const windowOptions = WindowOptions(
+    size: Size(1280, 800),
+    minimumSize: Size(1080, 720),
+    center: true,
+    title: 'Hermes Desktop',
+    titleBarStyle: TitleBarStyle.hidden,
+    windowButtonVisibility: false,
+  );
+
+  await windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.show();
+    await windowManager.focus();
+  });
 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
+
+  await ConnectionManager().init();
   runApp(HermesDesktopApp());
 }
 
@@ -58,6 +77,8 @@ class _HermesDesktopAppState extends State<HermesDesktopApp> {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: themeModeNotifier.value ? ThemeMode.dark : ThemeMode.light,
+      scaffoldMessengerKey: rootScaffoldKey,
+      navigatorKey: rootNavigatorKey,
       debugShowCheckedModeBanner: false,
       home: const MainShell(),
     );
@@ -74,26 +95,56 @@ class MainShell extends StatefulWidget {
 class MainShellState extends State<MainShell> {
   int _currentIndex = 0;
   bool _firstCheckDone = false;
+  bool _isMaximized = false;
 
-  static const _navItems = [
+  final ValueNotifier<int> tabNotifier = ValueNotifier<int>(0);
+
+  static final _navItems = [
     (Icons.dashboard_outlined, Icons.dashboard, '仪表盘'),
     (Icons.chat_outlined, Icons.chat, '聊天'),
     (Icons.devices_outlined, Icons.devices, '平台'),
     (Icons.schedule_outlined, Icons.schedule, '定时'),
     (Icons.article_outlined, Icons.article, '日志'),
-    (Icons.memory_outlined, Icons.memory, '模型'),
+    (Icons.memory_outlined, Icons.memory, '模型与技能'),
+    (Icons.folder_outlined, Icons.folder, '文件'),
     (Icons.settings_outlined, Icons.settings, '设置'),
   ];
 
-  void navigateTo(int index) => setState(() => _currentIndex = index);
+  void navigateTo(int index) {
+    tabNotifier.value = index;
+    setState(() => _currentIndex = index);
+  }
 
   @override
   void initState() {
     super.initState();
-    // 延迟检查，等 build 完成后再弹出向导
+    _checkMaximized();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkFirstSetup();
     });
+    ConnectionManager().setupNotifier.addListener(_onSetupStateChanged);
+    // 监听服务器切换，刷新所有子页面
+    GatewayService().refreshNotifier.addListener(_onGatewayRefresh);
+  }
+
+  Future<void> _checkMaximized() async {
+    try {
+      final maxed = await windowManager.isMaximized();
+      if (mounted) setState(() => _isMaximized = maxed);
+    } catch (_) {}
+  }
+
+  int _refreshKey = 0;
+
+  void _onGatewayRefresh() {
+    if (mounted) setState(() => _refreshKey++);
+  }
+
+  @override
+  void dispose() {
+    ConnectionManager().setupNotifier.removeListener(_onSetupStateChanged);
+    GatewayService().refreshNotifier.removeListener(_onGatewayRefresh);
+    super.dispose();
   }
 
   Future<void> _checkFirstSetup() async {
@@ -109,18 +160,93 @@ class MainShellState extends State<MainShell> {
 
     if (!hasGatewayUrl || !hasApiKey) {
       _showSetupWizard();
+      return;
+    }
+
+    final ok = await ConnectionManager().checkAndSetup();
+    if (!ok && mounted) {
+      _showSetupDialog();
     }
   }
 
-  void _showSetupWizard() {
+  void _showSetupDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => SetupScreen(
+        onComplete: () {
+          Navigator.pop(ctx);
+          if (mounted) ConnectionManager().checkAndSetup();
+        },
+      ),
+    );
+  }
+
+  void _showSetupWizard() async {
     if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => _SetupWizardDialog(
-        onComplete: () {
-          // 保存后重新加载
-        },
+        onComplete: () {},
+      ),
+    );
+  }
+
+  void _onSetupStateChanged() {
+    if (!mounted) return;
+    final state = ConnectionManager().setupNotifier.value;
+    if (state == SetupState.waitingForHermes) {
+      _showHermesSetupDialog();
+    }
+  }
+
+  void _showHermesSetupDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _HermesDownloadDialog(),
+    );
+  }
+
+  Future<void> _showHelpDialog(BuildContext context) async {
+    final doc = await rootBundle.loadString('assets/support_docs.md');
+    if (!context.mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.help_outline, color: Theme.of(ctx).colorScheme.primary),
+            const SizedBox(width: 10),
+            const Text('使用帮助'),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: MediaQuery.of(ctx).size.height * 0.7,
+          child: Markdown(
+            data: doc,
+            selectable: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              final uri = Uri.parse(
+                  'https://github.com/lovesmile/hermes-desktop-ui/issues');
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            },
+            child: const Text('问题反馈'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
       ),
     );
   }
@@ -128,69 +254,195 @@ class MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      body: SafeArea(
-        child: Row(
-          children: [
-            // M3 NavigationRail
-            NavigationRail(
-              selectedIndex: _currentIndex,
-              onDestinationSelected: (i) => navigateTo(i),
-              labelType: NavigationRailLabelType.all,
-              groupAlignment: -0.5,
-              backgroundColor: scheme.surface,
-              indicatorColor: scheme.secondaryContainer,
-              leading: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Column(
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF6750A4), Color(0xFFD0BCFF)],
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Center(
-                        child: Text('H',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 20)),
-                      ),
-                    ),
-                  ],
-                ),
+      body: Column(
+        children: [
+          // ── 自定义标题栏 ──
+          Container(
+            height: 32,
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainer,
+              border: Border(
+                bottom: BorderSide(color: scheme.outlineVariant, width: 0.5),
               ),
-              destinations: _navItems.map((item) {
-                return NavigationRailDestination(
-                  icon: Icon(item.$1),
-                  selectedIcon: Icon(item.$2, color: scheme.primary),
-                  label: Text(item.$3),
-                );
-              }).toList(),
             ),
-            // Separator
-            VerticalDivider(width: 1, color: scheme.outlineVariant),
-            Expanded(
-              child: IndexedStack(
-                index: _currentIndex,
+            child: DragToMoveArea(
+              child: Row(
                 children: [
-                  DashboardScreen(onNavigate: navigateTo),
-                  const ChatScreen(),
-                  const PlatformsScreen(),
-                  const CronScreen(),
-                  const LogsScreen(),
-                  const ModelsScreen(),
-                  const SettingsScreen(),
+                  const SizedBox(width: 12),
+                  Image.asset('assets/icon.png', width: 18, height: 18),
+                  const SizedBox(width: 8),
+                  Text('Hermes Desktop',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurface)),
+                  const Spacer(),
+                  SizedBox(
+                    width: 32, height: 32,
+                    child: IconButton(
+                      icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode, size: 14),
+                      onPressed: () => themeModeNotifier.toggle(),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: isDark ? '浅色模式' : '深色模式',
+                      style: IconButton.styleFrom(foregroundColor: scheme.onSurfaceVariant),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 46, height: 32,
+                    child: IconButton(
+                      icon: const Icon(Icons.minimize, size: 14),
+                      iconSize: 14,
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => windowManager.minimize(),
+                      tooltip: '最小化',
+                      style: IconButton.styleFrom(foregroundColor: scheme.onSurfaceVariant),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 46, height: 32,
+                    child: IconButton(
+                      icon: Icon(_isMaximized ? Icons.filter_none : Icons.crop_square, size: 14),
+                      iconSize: 14,
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () async {
+                        if (await windowManager.isMaximized()) {
+                          await windowManager.unmaximize();
+                        } else {
+                          await windowManager.maximize();
+                        }
+                      },
+                      tooltip: '最大化',
+                      style: IconButton.styleFrom(foregroundColor: scheme.onSurfaceVariant),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 46, height: 32,
+                    child: IconButton(
+                      icon: const Icon(Icons.close, size: 14),
+                      iconSize: 14,
+                      visualDensity: VisualDensity.compact,
+                      hoverColor: Colors.red,
+                      onPressed: () => windowManager.close(),
+                      tooltip: '关闭',
+                      style: IconButton.styleFrom(foregroundColor: scheme.onSurfaceVariant),
+                    ),
+                  ),
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+
+          // ── 主内容 ──
+          Expanded(
+            child: Row(
+              children: [
+                NavigationRail(
+                  selectedIndex: _currentIndex,
+                  onDestinationSelected: (i) => navigateTo(i),
+                  labelType: NavigationRailLabelType.all,
+                  groupAlignment: -0.5,
+                  backgroundColor: scheme.surface,
+                  indicatorColor: scheme.secondaryContainer,
+                  leading: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Image.asset('assets/icon.png', width: 40, height: 40),
+                  ),
+                  destinations: _navItems.map((item) {
+                    return NavigationRailDestination(
+                      icon: Icon(item.$1),
+                      selectedIcon: Icon(item.$2, color: scheme.primary),
+                      label: Text(item.$3),
+                    );
+                  }).toList(),
+                  trailing: Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Divider(height: 1),
+                        const SizedBox(height: 8),
+                        IconButton(
+                          icon: const Icon(Icons.help_outline),
+                          onPressed: () => _showHelpDialog(context),
+                          tooltip: '帮助',
+                          style: IconButton.styleFrom(foregroundColor: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                VerticalDivider(width: 1, color: scheme.outlineVariant),
+                Expanded(
+                  child: Column(
+                    children: [
+                      // ── 连接状态指示条 ──
+                      ValueListenableBuilder<ConnectionInfo>(
+                        valueListenable: ConnectionManager().stateNotifier,
+                        builder: (context, conn, _) {
+                          final s = Theme.of(context).colorScheme;
+                          Color dotColor;
+                          String label;
+                          switch (conn.status) {
+                            case ConnStatus.connected:
+                              dotColor = Colors.green;
+                              if (conn.mode == ConnectionMode.remote) {
+                                final parts = conn.message.split('已连接 ');
+                                final remotePart = parts.length > 1 ? parts.last : conn.message;
+                                label = '远程: $remotePart';
+                              } else {
+                                label = '本地模式';
+                              }
+                              break;
+                            case ConnStatus.connecting:
+                              dotColor = Colors.orange;
+                              label = '连接中...';
+                              break;
+                            case ConnStatus.disconnected:
+                            case ConnStatus.error:
+                              dotColor = Colors.red;
+                              label = '未连接';
+                              break;
+                          }
+                          return Container(
+                            height: 26,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: s.surfaceContainerLow,
+                              border: Border(bottom: BorderSide(color: s.outlineVariant, width: 0.5)),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(width: 8, height: 8, decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle)),
+                                const SizedBox(width: 6),
+                                Text(label, style: TextStyle(fontSize: 12, color: s.onSurfaceVariant)),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      Expanded(
+                        child: IndexedStack(
+                          key: ValueKey(_refreshKey),
+                          index: _currentIndex,
+                          children: [
+                            DashboardScreen(onNavigate: navigateTo, tabNotifier: tabNotifier),
+                            const ChatScreen(),
+                            const PlatformsScreen(),
+                            const CronScreen(),
+                            const LogsScreen(),
+                            ModelsScreen(onNavigate: navigateTo),
+                            const FileBrowserScreen(),
+                            const SettingsScreen(),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -225,14 +477,11 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
     setState(() => _saving = true);
     try {
       final configService = ConfigService();
-
-      // 1. 保存 Gateway 配置到 desktop_config.json
       await configService.writeDesktopConfig({
         'gateway_url': _gatewayUrlCtrl.text.trim(),
         'api_key': _apiKeyCtrl.text.trim(),
       });
 
-      // 2. 写 config.yaml（model.default + model.provider）
       final hermesHome = ConfigService.resolveHermesHome();
       final configFile = File('$hermesHome/config.yaml');
       if (await configFile.exists()) {
@@ -246,7 +495,6 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
         await configFile.writeAsString(content);
       }
 
-      // 3. 写 .env（Provider 的 API Key 和 Base URL）
       if (_providerApiKeyCtrl.text.trim().isNotEmpty) {
         final envFile = File('$hermesHome/.env');
         if (await envFile.exists()) {
@@ -284,19 +532,17 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败: $e'), backgroundColor: AppTheme.error),
+          SnackBar(content: Text('保存失败: $e')),
         );
       }
-    } finally {
-      if (mounted) setState(() => _saving = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final models = ms.providerModels[_selectedProvider] ?? [];
-
     return AlertDialog(
       title: Row(
         children: [
@@ -312,7 +558,6 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 说明文字
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
@@ -324,66 +569,40 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
                   children: [
                     Icon(Icons.lightbulb_outline, size: 16, color: AppTheme.info),
                     const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '配置 Hermes Desktop 的连接参数。Gateway 地址默认为本地 8642 端口。'
-                        '如果 Hermes 运行在远程服务器，请填写服务器 IP 和端口。',
-                        style: TextStyle(fontSize: 12, color: AppTheme.info),
-                      ),
-                    ),
+                    Expanded(child: Text(
+                      '配置 Hermes Desktop 的连接参数。Gateway 地址默认为本地 8642 端口。'
+                      '如果 Hermes 运行在远程服务器，请填写服务器 IP 和端口。',
+                      style: TextStyle(fontSize: 12, color: AppTheme.info),
+                    )),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
-
-              // ── Gateway 连接 ──
-              Text('Gateway 连接',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              Text('Gateway 连接', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
-              TextField(
-                controller: _gatewayUrlCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Gateway 地址',
-                  hintText: 'http://localhost:8642',
-                  prefixIcon: Icon(Icons.link, size: 18),
-                  isDense: true,
-                ),
-              ),
+              TextField(controller: _gatewayUrlCtrl, decoration: const InputDecoration(
+                labelText: 'Gateway 地址', hintText: 'http://localhost:8642',
+                prefixIcon: Icon(Icons.link, size: 18), isDense: true,
+              )),
               const SizedBox(height: 8),
-              TextField(
-                controller: _apiKeyCtrl,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'API Key',
-                  hintText: '与 .env 中 API_SERVER_KEY 一致',
-                  prefixIcon: Icon(Icons.key, size: 18),
-                  isDense: true,
-                ),
-              ),
+              TextField(controller: _apiKeyCtrl, obscureText: true, decoration: const InputDecoration(
+                labelText: 'API Key', hintText: '与 .env 中 API_SERVER_KEY 一致',
+                prefixIcon: Icon(Icons.key, size: 18), isDense: true,
+              )),
               const SizedBox(height: 16),
-
-              // ── LLM Provider ──
-              Text('LLM 模型',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              Text('LLM 模型', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 value: _selectedProvider,
-                decoration: const InputDecoration(
-                  labelText: 'Provider',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                ),
-                items: ms.allProviders
-                    .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-                    .toList(),
+                decoration: const InputDecoration(labelText: 'Provider', isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                items: ms.allProviders.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
                 onChanged: (v) {
                   if (v == null) return;
                   setState(() {
                     _selectedProvider = v;
                     final newModels = ms.providerModels[v] ?? [];
-                    if (newModels.isNotEmpty) {
-                      _selectedModel = newModels.first;
-                    }
+                    if (newModels.isNotEmpty) _selectedModel = newModels.first;
                   });
                 },
               ),
@@ -391,32 +610,17 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
               if (models.isNotEmpty)
                 DropdownButtonFormField<String>(
                   value: models.contains(_selectedModel) ? _selectedModel : models.first,
-                  decoration: const InputDecoration(
-                    labelText: '模型',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                  items: models
-                      .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                      .toList(),
-                  onChanged: (v) {
-                    if (v != null) setState(() => _selectedModel = v);
-                  },
+                  decoration: const InputDecoration(labelText: '模型', isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                  items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+                  onChanged: (v) { if (v != null) setState(() => _selectedModel = v); },
                 ),
               const SizedBox(height: 8),
-              TextField(
-                controller: _providerApiKeyCtrl,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Provider API Key',
-                  hintText: 'LLM 服务商的 API Key',
-                  prefixIcon: Icon(Icons.vpn_key_outlined, size: 18),
-                  isDense: true,
-                ),
-              ),
+              TextField(controller: _providerApiKeyCtrl, obscureText: true, decoration: const InputDecoration(
+                labelText: 'Provider API Key', hintText: 'LLM 服务商的 API Key',
+                prefixIcon: Icon(Icons.vpn_key_outlined, size: 18), isDense: true,
+              )),
               const SizedBox(height: 16),
-
-              // ── 提示 ──
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
@@ -427,14 +631,11 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Icon(Icons.info_outline, size: 14, color: AppTheme.warning),
-                    SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        '配置会写入 ~/.hermes/config.yaml 和 .env。'
-                        '如果 Hermes 已经配好，只需填 Gateway 地址即可。',
-                        style: TextStyle(fontSize: 11, color: AppTheme.warning),
-                      ),
-                    ),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(
+                      '配置会写入 ~/.hermes/config.yaml 和 .env。如果 Hermes 已经配好，只需填 Gateway 地址即可。',
+                      style: TextStyle(fontSize: 11, color: AppTheme.warning),
+                    )),
                   ],
                 ),
               ),
@@ -450,12 +651,52 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
         FilledButton(
           onPressed: _saving ? null : _save,
           child: _saving
-              ? const SizedBox(
-                  width: 16, height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
               : const Text('保存'),
         ),
       ],
+    );
+  }
+}
+
+/// Hermes 下载/安装进度对话框
+class _HermesDownloadDialog extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('正在安装 Hermes Agent'),
+      content: SizedBox(
+        width: 360,
+        child: ValueListenableBuilder<SetupState>(
+          valueListenable: ConnectionManager().setupNotifier,
+          builder: (context, state, _) {
+            String text;
+            switch (state) {
+              case SetupState.downloading: text = '正在下载...'; break;
+              case SetupState.installing: text = '正在安装...'; break;
+              case SetupState.ready: text = '安装完成'; break;
+              case SetupState.failed: text = '安装失败'; break;
+              default: text = '准备中...';
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (state == SetupState.failed)
+                  Icon(Icons.error_outline, size: 48, color: AppTheme.error)
+                else
+                  const SizedBox(width: 48, height: 48, child: CircularProgressIndicator(strokeWidth: 3)),
+                const SizedBox(height: 20),
+                Text(text, style: TextStyle(color: cs.onSurface)),
+                if (state == SetupState.ready) ...[
+                  const SizedBox(height: 16),
+                  FilledButton(onPressed: () => Navigator.pop(context), child: const Text('完成')),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
     );
   }
 }

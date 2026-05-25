@@ -19,38 +19,51 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Install dependencies
+      - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Build Windows release
+      - name: Build Flutter Windows release
         run: flutter build windows --release
 
-      - name: Package installer
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Hermes standalone exe
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path hermes-desktop-ui
-          Copy-Item "build\windows\x64\runner\Release\hermes_desktop.exe" -Destination "hermes-desktop-ui\"
-          Copy-Item "README.md" -Destination "hermes-desktop-ui\"
-          Copy-Item "SKILL.md" -Destination "hermes-desktop-ui\"
-          if (Test-Path "assets") {
-            Copy-Item -Recurse "assets" -Destination "hermes-desktop-ui\"
-          }
-          Compress-Archive -Path "hermes-desktop-ui\*" -DestinationPath "hermes-desktop-ui-windows-${{ github.ref_name }}.zip"
+          pip install hermes-agent==0.14.0 pyinstaller
+          pyinstaller --onefile --name hermes scripts/run_hermes.py
 
-      - name: Upload Release Asset
+      - name: Build all-in-one installer
+        shell: pwsh
+        run: |
+          # Make sure installer output dir exists
+          New-Item -ItemType Directory -Force -Path installer
+          # Download Inno Setup
+          Invoke-WebRequest -Uri "https://jrsoftware.org/download.php/is.exe" -OutFile "$env:TEMP\is.exe"
+          Start-Process -Wait -FilePath "$env:TEMP\is.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=$env:TEMP\is"
+          # Compile installer
+          & "$env:TEMP\is\ISCC.exe" installer.iss
+
+      - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: hermes-desktop-ui-windows-${{ github.ref_name }}.zip
+          files: |
+            installer/HermesDesktop-Setup-*.exe
+            dist/hermes.exe
           body: |
-            # Hermes Desktop UI ${{ github.ref_name }}
+            # Hermes Desktop ${{ github.ref_name }}
 
-            ## 下载
-            - [Windows 版](hermes-desktop-ui-windows-${{ github.ref_name }}.zip)
+            ## 一键安装（推荐）
+            - [HermesDesktop-Setup-${{ github.ref_name }}.exe](installer/HermesDesktop-Setup-${{ github.ref_name }}.exe)
 
-            ## 使用方法
-            1. 解压后双击 `hermes_desktop.exe` 运行
-            2. 确保 Hermes Agent 已安装并运行（`hermes gateway run`）
-            3. 首次使用在设置页配置 Gateway 地址（默认 `http://localhost:8642`）
+            下载安装包，双击安装，打开即用。内置 Hermes Agent，无需额外配置。
+
+            ## 手动部署
+            - [hermes_desktop.exe](hermes-desktop-ui-windows-${{ github.ref_name }}.zip)
+            - [hermes.exe（Hermes Agent）](hermes-bundle-windows-${{ github.ref_name }}.zip)
 
             ## 从源码构建
             ```bash

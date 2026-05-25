@@ -1,7 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/gateway_service.dart';
 import '../services/config_service.dart';
+import '../services/connection_manager.dart';
 import '../models/platform_config.dart';
 
 class PlatformsScreen extends StatefulWidget {
@@ -130,16 +134,24 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
           InkWell(
             onTap: () => _showPlatformDetail(platform),
             borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    platform.icon,
-                    style: const TextStyle(fontSize: 36),
-                  ),
-                  const SizedBox(height: 12),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: platform.color.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        platform.iconData,
+                        color: platform.color,
+                        size: 28,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                   Text(
                     platform.name,
                     style: const TextStyle(
@@ -219,7 +231,7 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
       builder: (ctx) => AlertDialog(
         title: Row(
           children: [
-            Text(platform.icon, style: const TextStyle(fontSize: 24)),
+            Icon(platform.iconData, color: platform.color, size: 24),
             const SizedBox(width: 10),
             Expanded(child: Text('${platform.name} 接入文档')),
           ],
@@ -252,10 +264,10 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
                 padding: const EdgeInsets.only(top: 16, bottom: 8),
                 child: Text(
                   line.replaceAll('#', '').trim(),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
               );
@@ -403,21 +415,19 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
           '- 支持 E2EE 的房间无法读取消息',
 
       '微信': '# 接入步骤\n'
-          '1. 注册微信公众号 (https://mp.weixin.qq.com)\n'
-          '2. 选择"服务号"类型（个人只能申请订阅号）\n\n'
-          '# 获取凭证\n'
-          '- App ID: 开发 > 基本配置 > AppID\n'
-          '- App Secret: 生成并复制 AppSecret\n\n'
-          '# 配置服务器\n'
-          '- 开发 > 基本配置 > 服务器配置\n'
-          '- URL: 你的 Hermes Gateway 地址 + /webhook/wechat\n'
-          '- Token: 自定义字符串，与 Hermes 配置一致\n'
-          '- EncodingAESKey: 随机生成\n\n'
-          '# IP 白名单\n'
-          '- 在基本配置中添加服务器 IP 到白名单\n\n'
-          '# 配置 Hermes\n'
-          '- 填入 App ID 和 App Secret\n'
-          '- 保存后重启 Gateway',
+          '1. 确保 Hermes 运行在可联网的环境中\n'
+          '2. 在下方点击"扫码绑定微信"按钮\n\n'
+          '# 扫码绑定\n'
+          '- 按钮拉起 iLink Bot 二维码\n'
+          '- 使用微信扫描二维码确认登录\n'
+          '- 系统会自动轮询状态，确认后保存凭证并重启 Gateway\n\n'
+          '# 发送消息\n'
+          '- 绑定成功后即可在微信中向 Hermes 发消息\n'
+          '- Hermes 会自动回复\n\n'
+          '# 注意事项\n'
+          '- 基于 iLink Bot 协议，非微信公众号接口\n'
+          '- 微信个人号扫码，无需服务号/订阅号\n'
+          '- 登录凭证会持久化保存，下次启动无需重新扫码',
     };
   }
 }
@@ -436,7 +446,9 @@ class _PlatformDetailSheet extends StatefulWidget {
 }
 
 class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
-  late Map<String, TextEditingController> _controllers;
+  Map<String, TextEditingController> _controllers = {};
+  final _formKey = GlobalKey<FormState>();
+  String _dialogError = '';
 
   @override
   void initState() {
@@ -446,6 +458,291 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
       _controllers[key] = TextEditingController();
     });
   }
+
+  // ═══════════════════════════════════════════
+  //  WeChat QR login — full lifecycle
+  // ═══════════════════════════════════════════
+
+  Process? _wechatProcess;
+  StreamSubscription<String>? _wechatSubscription;
+  bool _wechatLoading = false;
+  String? _wechatQrUrl;
+  String? _wechatError;
+  String? _wechatScanStatus;
+  int _wechatRemaining = 480;
+  String _wechatStatusText = '';
+
+  @override
+  void dispose() {
+    _cancelWechatFlow();
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  /// Cleanly cancel the ongoing WeChat QR login process
+  void _cancelWechatFlow() {
+    _wechatSubscription?.cancel();
+    _wechatSubscription = null;
+    if (_wechatProcess != null) {
+      _wechatProcess!.kill();
+      _wechatProcess = null;
+    }
+  }
+
+  /// Start the full QR login flow: fetch QR → poll → save credentials
+  Future<void> _startWechatQrFlow() async {
+    // Cancel any previous flow
+    _cancelWechatFlow();
+    setState(() {
+      _wechatLoading = true;
+      _wechatQrUrl = null;
+      _wechatError = null;
+      _wechatScanStatus = null;
+      _wechatRemaining = 480;
+      _wechatStatusText = '正在获取二维码...';
+    });
+
+    try {
+      // 查找脚本：优先 ~/.hermes/scripts/，其次项目默认位置
+      final findScript = await ConnectionManager().runShell(
+        'ls ~/.hermes/scripts/wechat_qr_login_full.py 2>/dev/null || '
+        'ls scripts/wechat_qr_login_full.py 2>/dev/null || echo ""',
+        allowFailure: true,
+      );
+      var scriptPath = findScript.stdout.trim();
+      if (scriptPath.isEmpty) {
+        // 最后的 fallback：让用户配置
+        throw Exception('找不到 wechat_qr_login_full.py 脚本，'
+            '请将其复制到 ~/.hermes/scripts/ 目录');
+      }
+      // 确保是绝对路径（通过 ~ 扩展）
+      if (!scriptPath.startsWith('/')) {
+        scriptPath = '~/.hermes/scripts/wechat_qr_login_full.py';
+      }
+      _wechatProcess = await Process.start(
+        'wsl.exe',
+        ['-d', 'Ubuntu', 'bash', '-c', 'python3 $scriptPath'],
+      );
+
+      _wechatSubscription = _wechatProcess!.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen(
+        (line) {
+          final trimmed = line.trim();
+          if (trimmed.isEmpty) return;
+          try {
+            final data = jsonDecode(trimmed) as Map<String, dynamic>;
+            _handleWechatEvent(data);
+          } catch (_) {
+            // skip non-JSON lines
+          }
+        },
+        onError: (e) {
+          if (!mounted) return;
+          setState(() {
+            _wechatLoading = false;
+            _wechatError = '读取输出失败: $e';
+          });
+        },
+        onDone: () {
+          // Process ended naturally (not cancelled)
+          if (!mounted) return;
+          // If no confirmed/error state was set, check if process had an error
+          if (_wechatLoading && _wechatError == null && _wechatScanStatus != 'confirmed') {
+            // Check stderr for clues
+            _wechatProcess?.stderr
+                .transform(utf8.decoder)
+                .join()
+                .then((stderr) {
+              if (mounted) {
+                setState(() {
+                  _wechatLoading = false;
+                  _wechatError = stderr.isNotEmpty
+                      ? stderr
+                      : '进程意外结束，请重试';
+                });
+              }
+            });
+          }
+        },
+        cancelOnError: false,
+      );
+    } catch (e) {
+      setState(() {
+        _wechatLoading = false;
+        _wechatError = e.toString();
+      });
+    }
+  }
+
+  void _handleWechatEvent(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final status = data['status'] as String? ?? '';
+
+    switch (status) {
+      case 'qr_ready':
+        setState(() {
+          _wechatLoading = false;
+          _wechatQrUrl = data['qrcode_url'] as String?;
+          _wechatError = null;
+          _wechatScanStatus = 'qr_ready';
+          _wechatStatusText = '请用微信扫描二维码';
+        });
+
+      case 'waiting_scan':
+        final remaining = data['remaining'] as int? ?? 0;
+        final minutes = (remaining ~/ 60).toString().padLeft(2, '0');
+        final seconds = (remaining % 60).toString().padLeft(2, '0');
+        setState(() {
+          _wechatRemaining = remaining;
+          _wechatScanStatus = 'waiting';
+          _wechatStatusText = '等待扫码  $minutes:$seconds';
+        });
+
+      case 'scanned':
+        setState(() {
+          _wechatScanStatus = 'scanned';
+          _wechatStatusText = '已扫码，请在手机上确认';
+        });
+
+      case 'confirmed':
+        final botId = data['ilink_bot_id'] as String? ?? '';
+        final botToken = data['bot_token'] as String? ?? '';
+        final baseUrl = data['baseurl'] as String? ?? 'https://ilinkai.weixin.qq.com';
+        setState(() {
+          _wechatLoading = false;
+          _wechatScanStatus = 'confirmed';
+          _wechatStatusText = '✓ 绑定成功，正在保存配置...';
+        });
+        _saveWechatConfig(botId, botToken, baseUrl);
+
+      case 'expired':
+        final attempt = data['attempt'] as int? ?? 0;
+        final maxAttempts = data['max_attempts'] as int? ?? 3;
+        if (attempt < maxAttempts) {
+          setState(() {
+            _wechatScanStatus = 'expired';
+            _wechatStatusText = '二维码已过期，正在重试 ($attempt/$maxAttempts)...';
+            _wechatQrUrl = null;
+          });
+          // The script will automatically retry with a new QR code
+          // But if the script has already exited (onDone), we need to restart
+          // The onDone handler will handle this
+        } else {
+          setState(() {
+            _wechatLoading = false;
+            _wechatError = '重试次数已达上限，请重新绑定';
+          });
+        }
+
+      case 'timeout':
+        setState(() {
+          _wechatLoading = false;
+          _wechatError = '等待超时（8分钟），请重新绑定';
+        });
+
+      case 'failed':
+        setState(() {
+          _wechatLoading = false;
+          _wechatError = data['error'] as String? ?? '绑定失败';
+        });
+
+      case 'error':
+        setState(() {
+          _wechatLoading = false;
+          _wechatError = data['error'] as String? ?? '发生错误';
+        });
+
+      default:
+        // unknown — ignore
+        break;
+    }
+  }
+
+  /// Save WeChat credentials to .env via runShell and restart gateway
+  Future<void> _saveWechatConfig(String botId, String token, String baseUrl) async {
+    try {
+      // Read current .env
+      final readResult = await ConnectionManager().runShell(
+        'cat ~/.hermes/.env 2>/dev/null || echo ""',
+        allowFailure: true,
+      );
+      String envContent = readResult.stdout;
+
+      // Update or add WEIXIN_ACCOUNT_ID
+      if (envContent.contains('WEIXIN_ACCOUNT_ID=')) {
+        envContent = envContent.replaceAll(
+          RegExp(r'WEIXIN_ACCOUNT_ID=.*'),
+          'WEIXIN_ACCOUNT_ID=$botId',
+        );
+      } else {
+        envContent += '\nWEIXIN_ACCOUNT_ID=$botId';
+      }
+
+      // Update or add WEIXIN_TOKEN
+      if (envContent.contains('WEIXIN_TOKEN=')) {
+        envContent = envContent.replaceAll(
+          RegExp(r'WEIXIN_TOKEN=.*'),
+          'WEIXIN_TOKEN=$token',
+        );
+      } else {
+        envContent += '\nWEIXIN_TOKEN=$token';
+      }
+
+      // Update or add WEIXIN_BASE_URL
+      if (envContent.contains('WEIXIN_BASE_URL=')) {
+        envContent = envContent.replaceAll(
+          RegExp(r'WEIXIN_BASE_URL=.*'),
+          'WEIXIN_BASE_URL=$baseUrl',
+        );
+      } else {
+        envContent += '\nWEIXIN_BASE_URL=$baseUrl';
+      }
+
+      // Write .env via base64 (avoid shell escaping issues)
+      final b64 = base64Encode(utf8.encode(envContent));
+      await ConnectionManager().runShell(
+        'echo "$b64" | base64 -d > ~/.hermes/.env',
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _wechatStatusText = '✓ 配置已保存，正在重启 Gateway...';
+      });
+
+      // Restart gateway
+      try {
+        await ConnectionManager().runShell(
+          'hermes --accept-hooks gateway restart',
+          allowFailure: true,
+        );
+      } catch (_) {
+        // Gateway restart might fail if not running, that's OK
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _wechatLoading = false;
+        _wechatStatusText = '✓ 绑定完成';
+      });
+
+      // Notify parent to refresh platform list
+      widget.onSaved();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _wechatLoading = false;
+        _wechatError = '保存配置失败: $e';
+      });
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  //  Field management
+  // ═══════════════════════════════════════════
 
   Map<String, String> _getFields() {
     switch (widget.platform.name.toLowerCase()) {
@@ -464,18 +761,10 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
       case 'matrix':
         return {'Homeserver': '', 'Access Token': ''};
       case '微信':
-        return {'App ID': '', 'App Secret': ''};
+        return {'引导': '扫码绑定'};
       default:
         return {'API Key': ''};
     }
-  }
-
-  @override
-  void dispose() {
-    for (final c in _controllers.values) {
-      c.dispose();
-    }
-    super.dispose();
   }
 
   String _helpForPlatform(String name) {
@@ -495,7 +784,7 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
       case 'matrix':
         return '输入 Matrix 服务器的 Homeserver URL 以及用户的 Access Token。可从 Element 设置中获取。';
       case '微信':
-        return '在微信公众平台创建服务号，获取 App ID 和 App Secret。需配置 IP 白名单。';
+        return '使用 iLink Bot 协议扫码登录。点击下方按钮获取二维码后用微信扫码确认。';
       default:
         return '输入该平台所需的 API 凭证。';
     }
@@ -519,6 +808,10 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
     return '例如: ${hints[field] ?? field}';
   }
 
+  // ═══════════════════════════════════════════
+  //  Build
+  // ═══════════════════════════════════════════
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -532,7 +825,7 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
         children: [
           Row(
             children: [
-              Text(widget.platform.icon, style: const TextStyle(fontSize: 28)),
+              Icon(widget.platform.iconData, color: widget.platform.color, size: 28),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -590,35 +883,286 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
               ),
             ),
           ),
-          ..._controllers.entries.map((e) => Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: TextField(
-                  controller: e.value,
-                  decoration: InputDecoration(
-                    labelText: e.key,
-                    hintText: _hintForField(e.key, widget.platform.name),
-                  ),
-                  obscureText: e.key.contains('Token') ||
-                      e.key.contains('Secret') ||
-                      e.key.contains('Key'),
+            if (widget.platform.name == '微信') ...[
+            // ── 微信扫码绑定（完整流程） ──
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: (_wechatLoading || _wechatScanStatus == 'confirmed')
+                    ? null
+                    : _startWechatQrFlow,
+                icon: _wechatLoading && _wechatQrUrl == null
+                    ? const SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : Icon(
+                        _wechatScanStatus == 'confirmed'
+                            ? Icons.check_circle_outline
+                            : Icons.qr_code_scanner,
+                        size: 20,
+                      ),
+                label: Text(
+                  _wechatScanStatus == 'confirmed'
+                      ? '已绑定'
+                      : _wechatLoading && _wechatQrUrl == null
+                          ? '正在获取二维码...'
+                          : '扫码绑定微信',
                 ),
-              )),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('配置已保存，请重启 Gateway 生效')),
-                );
-                widget.onSaved();
-              },
-              child: const Text('保存配置'),
+              ),
             ),
-          ),
+            // Show cancel button during flow
+            if (_wechatLoading || _wechatQrUrl != null || _wechatScanStatus == 'waiting' || _wechatScanStatus == 'scanned')
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: () {
+                      _cancelWechatFlow();
+                      setState(() {
+                        _wechatLoading = false;
+                        _wechatQrUrl = null;
+                        _wechatError = null;
+                        _wechatScanStatus = null;
+                      });
+                    },
+                    child: const Text('取消绑定'),
+                  ),
+                ),
+              ),
+            // QR code and status area
+            if (_wechatQrUrl != null ||
+                _wechatError != null ||
+                _wechatScanStatus != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: _buildWechatStatus(),
+              ),
+            ],
+          ] else ...[
+            ..._controllers.entries.map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: TextField(
+                    controller: e.value,
+                    decoration: InputDecoration(
+                      labelText: e.key,
+                      hintText: _hintForField(e.key, widget.platform.name),
+                    ),
+                    obscureText: e.key.contains('Token') ||
+                        e.key.contains('Secret') ||
+                        e.key.contains('Key'),
+                  ),
+                )),
+          ],
+          if (widget.platform.name != '微信') ...[
+            if (_dialogError.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.error.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline, size: 16, color: AppTheme.error),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _dialogError,
+                        style: TextStyle(fontSize: 12, color: AppTheme.error),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () {
+                  // Validate required fields are not empty
+                  final emptyFields = _controllers.entries
+                      .where((e) => e.key != '引导' && e.value.text.trim().isEmpty)
+                      .map((e) => e.key)
+                      .toList();
+                  if (emptyFields.isNotEmpty) {
+                    setState(() {
+                      _dialogError = '请填写: ${emptyFields.join(", ")}';
+                    });
+                    return;
+                  }
+                  setState(() => _dialogError = '');
+                  widget.onSaved();
+                },
+                child: const Text('保存配置'),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
         ],
       ),
+    );
+  }
+
+  /// Build the WeChat QR/status display area
+  Widget _buildWechatStatus() {
+    final cs = Theme.of(context).colorScheme;
+
+    // Error state
+    if (_wechatError != null) {
+      return Column(
+        children: [
+          Icon(Icons.error_outline, size: 48, color: AppTheme.error),
+          const SizedBox(height: 8),
+          Text(
+            _wechatError!,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: AppTheme.error),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _startWechatQrFlow,
+            icon: const Icon(Icons.refresh, size: 16),
+            label: const Text('重新绑定'),
+          ),
+        ],
+      );
+    }
+
+    // Confirmed state
+    if (_wechatScanStatus == 'confirmed') {
+      return Column(
+        children: [
+          Icon(Icons.check_circle, size: 48, color: AppTheme.success),
+          const SizedBox(height: 8),
+          Text(
+            _wechatStatusText,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: AppTheme.success),
+          ),
+        ],
+      );
+    }
+
+    // QR code state
+    if (_wechatQrUrl != null) {
+      return Column(
+        children: [
+          // QR code image
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.network(
+              'https://api.qrserver.com/v1/create-qr-code/'
+              '?size=200x200&data=${Uri.encodeComponent(_wechatQrUrl!)}',
+              width: 200, height: 200,
+              errorBuilder: (_, __, ___) => Icon(
+                Icons.qr_code, size: 120, color: AppTheme.primary,
+              ),
+              loadingBuilder: (_, child, progress) {
+                if (progress == null) return child;
+                return const SizedBox(
+                  width: 200, height: 200,
+                  child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Scan status
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (_wechatScanStatus == 'waiting' || _wechatScanStatus == 'qr_ready')
+                Icon(Icons.qr_code_scanner, size: 16,
+                    color: cs.onSurfaceVariant),
+              if (_wechatScanStatus == 'scanned')
+                Icon(Icons.smartphone, size: 16, color: AppTheme.warning),
+              const SizedBox(width: 6),
+              Text(
+                _wechatStatusText,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: _wechatScanStatus == 'scanned'
+                      ? AppTheme.warning
+                      : cs.onSurface,
+                ),
+              ),
+            ],
+          ),
+          if (_wechatScanStatus == 'waiting' || _wechatScanStatus == 'qr_ready') ...[
+            const SizedBox(height: 8),
+            // Progress bar showing remaining time
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: _wechatRemaining / 480.0,
+                backgroundColor: cs.surfaceContainerHighest,
+                minHeight: 4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '二维码剩余 ${_wechatRemaining ~/ 60} 分钟',
+              style: TextStyle(
+                fontSize: 11,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ],
+          // Show the raw link for manual use
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _wechatQrUrl!,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontFamily: 'monospace',
+                      color: cs.onSurfaceVariant,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                InkWell(
+                  onTap: () {
+                    // Copy to clipboard
+                    // Use platform channel or just select text
+                  },
+                  child: Icon(Icons.copy, size: 14, color: cs.primary),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Loading state (no QR yet)
+    return const Padding(
+      padding: EdgeInsets.all(20),
+      child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../config/theme.dart';
 
@@ -21,8 +22,6 @@ class ChatMessageWidget extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // User: primary container bg → white text
-    // AI:   surface container bg → on-surface text
     final bgColor = isUser
         ? scheme.primaryContainer.withValues(alpha: 0.6)
         : scheme.surfaceContainerHigh;
@@ -58,88 +57,90 @@ class ChatMessageWidget extends StatelessWidget {
             const SizedBox(width: 10),
           ],
           Flexible(
-            child: Container(
-              constraints: BoxConstraints(
-                maxWidth: isUser ? 600 : 700,
-              ),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(14),
-                  topRight: const Radius.circular(14),
-                  bottomLeft: Radius.circular(isUser ? 14 : 4),
-                  bottomRight: Radius.circular(isUser ? 4 : 14),
+            child: GestureDetector(
+              onSecondaryTapUp: (details) => _showCopyMenu(context, details),
+              onLongPress: () => _showCopyMenu(context, null),
+              child: Container(
+                constraints: BoxConstraints(
+                  maxWidth: isUser ? 600 : 700,
                 ),
-                border: Border.all(color: borderColor),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  MarkdownBody(
-                    data: content,
-                    selectable: true,
-                    styleSheet: MarkdownStyleSheet(
-                      p: TextStyle(
-                        color: textColor,
-                        fontSize: 14,
-                        height: 1.6,
-                      ),
-                      code: TextStyle(
-                        color: scheme.tertiary,
-                        fontSize: 13,
-                        fontFamily: 'monospace',
-                        backgroundColor: isDark ? Colors.white10 : Colors.black12,
-                      ),
-                      codeblockDecoration: BoxDecoration(
-                        color: isDark ? Colors.white10 : Colors.black12,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      h1: TextStyle(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(14),
+                    topRight: const Radius.circular(14),
+                    bottomLeft: Radius.circular(isUser ? 14 : 4),
+                    bottomRight: Radius.circular(isUser ? 4 : 14),
+                  ),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    MarkdownBody(
+                      data: content,
+                      selectable: true,
+                      styleSheet: MarkdownStyleSheet(
+                        p: TextStyle(
                           color: textColor,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold),
-                      h2: TextStyle(
-                          color: textColor,
-                          fontSize: 17,
-                          fontWeight: FontWeight.bold),
-                      h3: TextStyle(
-                          color: textColor,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600),
-                      blockquoteDecoration: BoxDecoration(
-                        border: Border(
-                            left: BorderSide(
-                                color: scheme.primary, width: 3)),
-                        color: scheme.surfaceContainerLow,
-                      ),
-                      listBullet: TextStyle(color: scheme.primary),
-                      listBulletPadding: const EdgeInsets.only(right: 4),
-                      horizontalRuleDecoration: BoxDecoration(
-                        border: Border(
-                          top: BorderSide(
-                            color: scheme.outlineVariant,
-                            width: 1,
+                          fontSize: 14,
+                          height: 1.6,
+                        ),
+                        code: TextStyle(
+                          color: scheme.tertiary,
+                          fontSize: 13,
+                          fontFamily: 'monospace',
+                          backgroundColor: isDark ? Colors.white10 : Colors.black12,
+                        ),
+                        codeblockDecoration: BoxDecoration(
+                          color: isDark ? Colors.white10 : Colors.black12,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        h1: TextStyle(
+                            color: textColor,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold),
+                        h2: TextStyle(
+                            color: textColor,
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold),
+                        h3: TextStyle(
+                            color: textColor,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600),
+                        blockquoteDecoration: BoxDecoration(
+                          border: Border(
+                              left: BorderSide(
+                                  color: scheme.primary, width: 3)),
+                          color: scheme.surfaceContainerLow,
+                        ),
+                        listBullet: TextStyle(color: scheme.primary),
+                        listBulletPadding: const EdgeInsets.only(right: 4),
+                        horizontalRuleDecoration: BoxDecoration(
+                          border: Border(
+                            top: BorderSide(
+                              color: scheme.outlineVariant,
+                              width: 1,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  // Tool calls
-                  if (toolCalls != null && toolCalls!.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    ...toolCalls!.map((tc) => _ToolCallCard(tc: tc)),
-                  ],
-                  // Timestamp
-                  const SizedBox(height: 6),
-                  Text(
-                    _formatTimestamp(timestamp),
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: scheme.onSurfaceVariant,
+                    if (toolCalls != null && toolCalls!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      ...toolCalls!.map((tc) => _ToolCallCard(tc: tc)),
+                    ],
+                    const SizedBox(height: 6),
+                    Text(
+                      _formatTimestamp(timestamp),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -157,6 +158,39 @@ class ChatMessageWidget extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _showCopyMenu(BuildContext context, TapUpDetails? details) {
+    final renderBox = context.findRenderObject() as RenderBox;
+    final pos = details?.globalPosition ?? renderBox.localToGlobal(Offset.zero);
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx + 1, pos.dy + 1),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      items: [
+        PopupMenuItem<String>(
+          value: 'copy',
+          child: SizedBox(
+            width: 100,
+            child: Row(
+              children: [
+                Icon(Icons.copy, size: 16, color: Theme.of(context).colorScheme.onSurface),
+                const SizedBox(width: 8),
+                Text('复制', style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'copy') {
+        Clipboard.setData(ClipboardData(text: content));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)),
+        );
+      }
+    });
   }
 
   String _formatTimestamp(DateTime dt) {

@@ -2,14 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../models/session.dart';
 import '../models/stats.dart';
 import '../models/cron_job.dart';
 import '../models/log_entry.dart';
 import 'config_service.dart';
+import 'connection_manager.dart';
 
 /// Hermes Gateway API Server 客户端
-/// 真实接口: OpenAI-compatible API + 文件 I/O
 class GatewayService {
   static final GatewayService _instance = GatewayService._();
   factory GatewayService() => _instance;
@@ -22,6 +24,28 @@ class GatewayService {
   bool _offline = false;
   bool get isOffline => _offline;
   HttpClient _client = HttpClient();
+
+  /// 数据刷新通知器 — 连接切换/服务器变更时触发，各页面监听到后重新加载数据
+  final ValueNotifier<int> refreshNotifier = ValueNotifier<int>(0);
+
+  /// 当前连接的服务器标识（"local" 或远程 IP），用于隔离不同服务器的缓存数据
+  String _serverId = 'local';
+  String get serverId => _serverId;
+
+  /// 设置服务器标识并刷新数据
+  void setServerId(String id) {
+    _serverId = id;
+    // 清除所有缓存
+    _apiKey = null;
+    _offline = false;
+    _lastSessionId = null;
+    _cachedHermesHome = null;
+    _client.close(force: true);
+    _client = HttpClient();
+    _client.connectionTimeout = const Duration(seconds: 5);
+    // 通知所有监听页面刷新数据
+    refreshNotifier.value++;
+  }
 
   /// 从响应头中读取的最后一个 session ID
   String? _lastSessionId;
@@ -37,12 +61,29 @@ class GatewayService {
     return _apiKey ?? '';
   }
 
-  /// 从配置中刷新 Gateway URL
+  /// 从 ConnectionManager 刷新 Gateway URL
   Future<void> refreshBaseUrl() async {
-    _baseUrl = await _configService.getGatewayUrl();
+    _baseUrl = ConnectionManager().gatewayUrl;
   }
 
-  String get _hermesHome => ConfigService.resolveHermesHome();
+  /// 清除所有缓存（连接切换时调用）
+  void clearCache() {
+    setServerId(_serverId);
+  }
+
+  /// 缓存服务器专用的 Hermes Home 路径（隔离不同服务器的本地数据）
+  String? _cachedHermesHome;
+  String get _hermesHome {
+    if (_cachedHermesHome != null) return _cachedHermesHome!;
+    final home = ConfigService.resolveHermesHome();
+    if (_serverId == 'local') {
+      _cachedHermesHome = home;
+    } else {
+      // 远程服务器数据缓存到 ~/.hermes/cache/<server_id>/
+      _cachedHermesHome = '$home/cache/$_serverId';
+    }
+    return _cachedHermesHome!;
+  }
 
   void _resetClient() {
     _client.close(force: true);
@@ -80,23 +121,113 @@ class GatewayService {
   }
 
   // ═══════════════════════════════════════════
+  //  Gateway 状态 (GET /api/status)
+  // ═══════════════════════════════════════════
+
+  Future<Map<String, dynamic>> getStatus() async {
+    try {
+      _resetClient();
+      final request = await _client
+          .getUrl(Uri.parse('$_baseUrl/api/status'))
+          .timeout(const Duration(seconds: 5));
+      await _applyAuth(request);
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+      final json = jsonDecode(body);
+      _offline = false;
+      return json is Map<String, dynamic> ? json : {};
+    } catch (_) {
+      _offline = true;
+      return {};
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  //  Token 统计 (GET /api/status/tokens)
+  // ═══════════════════════════════════════════
+
+  Future<Map<String, dynamic>> getTokenStats() async {
+    try {
+      _resetClient();
+      final request = await _client
+          .getUrl(Uri.parse('$_baseUrl/api/status/tokens'))
+          .timeout(const Duration(seconds: 5));
+      await _applyAuth(request);
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+      final json = jsonDecode(body);
+      _offline = false;
+      return json is Map<String, dynamic> ? json : {};
+    } catch (_) {
+      _offline = true;
+      return {};
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  //  文件列表 (GET /api/files?path=...)
+  // ═══════════════════════════════════════════
+
+  Future<List<Map<String, dynamic>>> listFiles(String path) async {
+    try {
+      _resetClient();
+      final uri = Uri.parse('$_baseUrl/api/files')
+          .replace(queryParameters: {'path': path});
+      final request = await _client
+          .getUrl(uri)
+          .timeout(const Duration(seconds: 5));
+      await _applyAuth(request);
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+      final json = jsonDecode(body);
+      _offline = false;
+      if (json is List) {
+        return json.cast<Map<String, dynamic>>();
+      }
+      return [];
+    } catch (_) {
+      _offline = true;
+      return [];
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  //  文件内容 (GET /api/files/content?path=...)
+  // ═══════════════════════════════════════════
+
+  Future<String> getFileContent(String path) async {
+    try {
+      _resetClient();
+      final uri = Uri.parse('$_baseUrl/api/files/content')
+          .replace(queryParameters: {'path': path});
+      final request = await _client
+          .getUrl(uri)
+          .timeout(const Duration(seconds: 5));
+      await _applyAuth(request);
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+      _offline = false;
+      return body;
+    } catch (_) {
+      _offline = true;
+      return '';
+    }
+  }
+
+  // ═══════════════════════════════════════════
   //  流式聊天 (POST /v1/chat/completions, SSE)
   // ═══════════════════════════════════════════
 
-  Stream<String> chatStream(String message, {String? sessionId}) {
-    final controller = StreamController<String>.broadcast(
-      onCancel: () {
-        _client.close(force: true);
-        _resetClient();
-      },
-    );
-
-    _doChat(message, sessionId, controller);
+  Stream<String> chatStream(String message,
+      {String? sessionId, List<Map<String, String>>? attachments}) {
+    final controller = StreamController<String>.broadcast();
+    _doChat(message, sessionId, controller, attachments: attachments);
     return controller.stream;
   }
 
   Future<void> _doChat(String message, String? sessionId,
-      StreamController<String> controller) async {
+      StreamController<String> controller,
+      {List<Map<String, String>>? attachments}) async {
     try {
       final uri = Uri.parse('$_baseUrl/v1/chat/completions');
       final request = await _client.postUrl(uri);
@@ -107,11 +238,37 @@ class GatewayService {
         request.headers.set('X-Hermes-Session-Id', sessionId);
       }
 
+      // Build the user message content — text-only or multimodal
+      Map<String, dynamic> userMessage;
+      if (attachments != null && attachments.isNotEmpty) {
+        final contentParts = <Map<String, dynamic>>[
+          {'type': 'text', 'text': message},
+        ];
+        for (final att in attachments) {
+          final path = att['path'] ?? '';
+          final mime = att['mime'] ?? 'image/png';
+          if (path.isNotEmpty) {
+            final file = File(path);
+            if (await file.exists()) {
+              final bytes = await file.readAsBytes();
+              final b64 = base64Encode(bytes);
+              contentParts.add({
+                'type': 'image_url',
+                'image_url': {
+                  'url': 'data:$mime;base64,$b64',
+                },
+              });
+            }
+          }
+        }
+        userMessage = {'role': 'user', 'content': contentParts};
+      } else {
+        userMessage = {'role': 'user', 'content': message};
+      }
+
       final body = jsonEncode({
         'model': 'hermes-agent',
-        'messages': [
-          {'role': 'user', 'content': message}
-        ],
+        'messages': [userMessage],
         'stream': true,
       });
       request.add(utf8.encode(body));
@@ -498,9 +655,22 @@ class GatewayService {
     final logs = <LogEntry>[];
     try {
       final logSource = source ?? 'agent';
-      final file = File('$_hermesHome/logs/$logSource.log');
+      final logPath = '$_hermesHome/logs/$logSource.log';
+      String? content;
+
+      // Try direct file read first
+      final file = File(logPath);
       if (await file.exists()) {
-        final content = await file.readAsString();
+        content = await file.readAsString();
+      } else if (Platform.isWindows) {
+        // On Windows, try reading via WSL
+        final result = await ConnectionManager().execBash(
+            'cat ~/.hermes/logs/$logSource.log 2>/dev/null');
+        final stdout = result.stdout as String;
+        if (stdout.isNotEmpty) content = stdout;
+      }
+
+      if (content != null && content.isNotEmpty) {
         final lines = content.split('\n');
         for (final line in lines.reversed.take(500)) {
           if (line.trim().isEmpty) continue;
@@ -531,6 +701,25 @@ class GatewayService {
       }
     } catch (_) {}
     return logs;
+  }
+
+  /// 清除指定源的所有日志文件内容
+  Future<bool> clearLogs(String source) async {
+    try {
+      final logPath = '$_hermesHome/logs/$source.log';
+      final file = File(logPath);
+      if (await file.exists()) {
+        await file.writeAsString('');
+        return true;
+      } else if (Platform.isWindows) {
+        final result = await ConnectionManager().execBash(
+            '> ~/.hermes/logs/$source.log 2>/dev/null');
+        return result.exitCode == 0;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 清除缓存的 API Key（当设置页修改后调用）

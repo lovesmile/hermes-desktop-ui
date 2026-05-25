@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../config/theme.dart';
 import '../services/gateway_service.dart';
 import '../models/log_entry.dart';
@@ -75,7 +76,32 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
       case 'DEBUG':
         return Theme.of(context).colorScheme.onSurfaceVariant;
       default:
-        return Colors.white54;
+        return Theme.of(context).colorScheme.onSurfaceVariant;
+    }
+  }
+
+  Future<void> _confirmDeleteLogs() async {
+    final source = _sources[_tabController.index];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('确认删除'),
+        content: Text('确定要删除所有「${_tabs[_tabController.index]}」吗？此操作不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('删除', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _gateway.clearLogs(source);
+      _loadLogs();
     }
   }
 
@@ -84,11 +110,19 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
     return Scaffold(
       appBar: AppBar(
         title: Text('日志'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.delete_outline, size: 20),
+            onPressed: () => _confirmDeleteLogs(),
+            tooltip: '删除日志',
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: _tabs.map((t) => Tab(text: t)).toList(),
           labelColor: AppTheme.primary,
-          unselectedLabelColor: Colors.white54,
+          unselectedLabelColor: Theme.of(context).colorScheme.onSurfaceVariant,
           indicatorColor: AppTheme.primary,
         ),
       ),
@@ -119,14 +153,14 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                           });
                           _loadLogs();
                         },
-                        selectedColor: AppTheme.primary.withValues(alpha: 0.3),
-                        backgroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                        selectedColor: AppTheme.primary.withValues(alpha: 0.15),
+                        backgroundColor: Colors.transparent,
                         labelStyle: TextStyle(
                           fontSize: 11,
                           color: _selectedLevel == l ||
                                   (l == 'ALL' && _selectedLevel.isEmpty)
                               ? AppTheme.primary
-                              : Colors.white54,
+                              : Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         visualDensity: VisualDensity.compact,
@@ -213,56 +247,87 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildLogEntry(LogEntry log) {
+    final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Timestamp
-          SizedBox(
-            width: 140,
-            child: Text(
-              '${log.timestamp.hour.toString().padLeft(2, '0')}:${log.timestamp.minute.toString().padLeft(2, '0')}:${log.timestamp.second.toString().padLeft(2, '0')}',
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'monospace',
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+      child: GestureDetector(
+        onSecondaryTapUp: (details) {
+          final pos = details.globalPosition;
+          showMenu<String>(
+            context: context,
+            position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx + 1, pos.dy + 1),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            color: cs.surfaceContainerHigh,
+            items: [
+              PopupMenuItem<String>(
+                value: 'copy',
+                child: SizedBox(
+                  width: 100,
+                  child: Row(
+                    children: [
+                      Icon(Icons.copy, size: 16, color: cs.onSurface),
+                      SizedBox(width: 8),
+                      Text('复制', style: TextStyle(color: cs.onSurface)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ).then((v) {
+            if (v == 'copy') {
+              Clipboard.setData(ClipboardData(text: log.message));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)),
+              );
+            }
+          });
+        },
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 140,
+              child: Text(
+                '${log.timestamp.hour.toString().padLeft(2, '0')}:${log.timestamp.minute.toString().padLeft(2, '0')}:${log.timestamp.second.toString().padLeft(2, '0')}',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  color: cs.onSurfaceVariant,
+                ),
               ),
             ),
-          ),
-          // Level badge
-          Container(
-            width: 48,
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            decoration: BoxDecoration(
-              color: _levelColor(log.level).withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              log.level,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 10,
-                fontFamily: 'monospace',
-                color: _levelColor(log.level),
-                fontWeight: FontWeight.w600,
+            Container(
+              width: 48,
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              decoration: BoxDecoration(
+                color: _levelColor(log.level).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                log.level,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                  color: _levelColor(log.level),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
-          ),
-          SizedBox(width: 8),
-          // Message
-          Expanded(
-            child: Text(
-              log.message,
-              style: TextStyle(
-                fontSize: 12,
-                fontFamily: 'monospace',
-                color: Theme.of(context).colorScheme.onSurface,
-                height: 1.4,
+            SizedBox(width: 8),
+            Expanded(
+              child: SelectableText(
+                log.message,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  color: cs.onSurface,
+                  height: 1.4,
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

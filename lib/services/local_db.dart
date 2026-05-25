@@ -2,16 +2,31 @@ import 'dart:convert';
 import 'dart:io';
 import '../models/session.dart';
 import 'config_service.dart';
+import 'connection_manager.dart';
 
 /// Desktop 客户端本地数据库
 /// 用 JSON 文件存储会话和消息，类似 IM 客户端本地存储
 /// 每次操作后立即持久化，重启不丢数据
+/// 支持 local/远程IP 两种模式，用不同 DB 文件隔离
 class LocalDatabase {
   static final LocalDatabase _instance = LocalDatabase._();
   factory LocalDatabase() => _instance;
   LocalDatabase._();
 
-  String get _dbPath => '${ConfigService.resolveHermesHome()}/desktop_db.json';
+  String _mode = 'local';
+
+  /// 切换连接模式，同时切换 DB 文件实现隔离
+  Future<void> setMode(String mode) async {
+    if (_mode == mode) return;
+    _mode = mode;
+    _cache = null;
+  }
+
+  String get _dbPath {
+    final base = '${ConfigService.resolveHermesHome()}/desktop_db';
+    final suffix = connectionModeToDbSuffix(_mode);
+    return suffix.isEmpty ? '${base}.json' : '${base}$suffix.json';
+  }
 
   Map<String, dynamic>? _cache;
 
@@ -170,13 +185,7 @@ class LocalDatabase {
 
   String? _getPreview(List? messages) {
     if (messages == null || messages.isEmpty) return null;
-    for (int i = messages.length - 1; i >= 0; i--) {
-      final m = messages[i] as Map<String, dynamic>? ?? {};
-      if (m['role'] == 'assistant') {
-        final c = m['content'] as String? ?? '';
-        if (c.isNotEmpty) return c.length > 100 ? '${c.substring(0, 100)}...' : c;
-      }
-    }
+    // 取最后一条消息（无论 user 还是 assistant）
     final last = messages.last as Map<String, dynamic>? ?? {};
     final c = last['content'] as String? ?? '';
     if (c.isNotEmpty) return c.length > 100 ? '${c.substring(0, 100)}...' : c;
