@@ -38,24 +38,9 @@ class _FilesScreenState extends State<FilesScreen> {
   Future<void> _loadFiles() async {
     setState(() => _loading = true);
     try {
-      final path = _currentPath.isEmpty ? r'$HOME' : r'$HOME/' + _currentPath;
-      final cmd =
-          "p=\"$path\"; ls -1A \"\$p\" 2>/dev/null | while IFS= read -r name; do "
-          "  [ -z \"\$name\" ] && continue; "
-          "  full=\"\$p/\$name\"; "
-          "  if [ -d \"\$full\" ]; then "
-          "    echo \"d|0||\$name\"; "
-          "  elif [ -f \"\$full\" ]; then "
-          "    size=\$(stat -c '%s' \"\$full\" 2>/dev/null || echo 0); "
-          "    mtime=\$(stat -c '%Y' \"\$full\" 2>/dev/null || echo ''); "
-          "    if [ -n \"\$mtime\" ] && [ \"\$mtime\" != \"0\" ]; then "
-          "      mtime=\$(date -d \"@\$mtime\" '+%Y-%m-%d %H:%M' 2>/dev/null || echo ''); "
-          "    else "
-          "      mtime=''; "
-          "    fi; "
-          "    echo \"-|\$size|\$mtime|\$name\"; "
-          "  fi; "
-          "done";
+      final home = r'$HOME';
+      final path = _currentPath.isEmpty ? home : '$home/${_currentPath}';
+      final cmd = 'ls -1la "$path" 2>/dev/null || echo "ERR:目录不存在或权限不足"';
 
       String rawOutput;
       if (_cm.state.mode == ConnectionMode.remote) {
@@ -65,26 +50,26 @@ class _FilesScreenState extends State<FilesScreen> {
         rawOutput = r.stdout as String;
       }
 
+      if (rawOutput.startsWith('ERR:')) {
+        if (mounted) setState(() { _error = rawOutput; _loading = false; });
+        return;
+      }
+
       final items = <_FileItem>[];
       for (final line in rawOutput.split('\n')) {
         final t = line.trim();
         if (t.isEmpty) continue;
-        // 格式: d|0||name  或  -|1234|2025-05-24 10:00|name
-        final sep = t.indexOf('|');
-        if (sep < 0) continue;
-        final type = t.substring(0, sep);
-        final rest = t.substring(sep + 1);
-        final parts = rest.split('|');
-        if (parts.length < 3) continue;
-        final sizeStr = parts[0];
-        final mtimeStr = parts[1];
-        // 文件名可能含 |，剩下全是文件名
-        final name = parts.sublist(2).join('|');
+        // ls -1la output: drwxr-xr-x 2 user group 4096 May 24 10:00 name
+        final parts = t.split(RegExp(r'\s+'));
+        if (parts.length < 8) continue;
+        final isDir = parts[0].startsWith('d');
+        final size = int.tryParse(parts[4]) ?? 0;
+        final name = parts.sublist(7).join(' ');
+        if (name == '.' || name == '..') continue;
         items.add(_FileItem(
           name: name,
-          isDir: type == 'd',
-          size: int.tryParse(sizeStr) ?? 0,
-          mtime: mtimeStr,
+          isDir: isDir,
+          size: size,
         ));
       }
       // 排序：文件夹在前，字母序
@@ -178,9 +163,6 @@ class _FilesScreenState extends State<FilesScreen> {
                                       ],
                                     ),
                                   ),
-                                  if (item.mtime.isNotEmpty)
-                                    Text(item.mtime,
-                                        style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
                                 ],
                               ),
                             ),
@@ -196,6 +178,5 @@ class _FileItem {
   final String name;
   final bool isDir;
   final int size;
-  final String mtime;
-  const _FileItem({required this.name, required this.isDir, this.size = 0, this.mtime = ''});
+  const _FileItem({required this.name, required this.isDir, this.size = 0});
 }

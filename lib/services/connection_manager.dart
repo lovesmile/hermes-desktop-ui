@@ -384,6 +384,8 @@ class ConnectionManager {
     args.add('StrictHostKeyChecking=accept-new');
     args.add('-o');
     args.add('ServerAliveInterval=30');
+    args.add('-o');
+    args.add('BatchMode=yes');
 
     // 非默认端口
     if (config.port != 22) {
