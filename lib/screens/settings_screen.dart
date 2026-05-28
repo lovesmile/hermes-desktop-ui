@@ -188,9 +188,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _saveConnectionConfig() async {
     final config = await _configService.readDesktopConfig();
-    final host = _hostController.text.trim();
-    config['connection_mode'] =
-        _selectedMode == ConnectionMode.remote ? host : 'local';
+    config['connection_mode'] = _selectedMode == ConnectionMode.remote
+        ? 'remote'
+        : (_selectedMode == ConnectionMode.embedded ? 'embedded' : 'local');
     config['local_port'] = int.tryParse(_portController.text.trim()) ?? 8642;
     config['ssh_config'] = {
       'host': _hostController.text.trim(),
@@ -206,6 +206,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _cm.switchToLocal();
       _gateway.refreshBaseUrl();
       _gateway.setServerId('local');
+    } else if (_selectedMode == ConnectionMode.embedded) {
+      await _cm.switchToEmbedded();
+      _gateway.refreshBaseUrl();
+      _gateway.setServerId('embedded');
     } else {
       final host = _hostController.text.trim();
       final sshConfig = SshConfig(
@@ -704,6 +708,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: _buildModeRadio(
+                value: ConnectionMode.embedded,
+                title: '内嵌',
+                subtitle: 'Windows 内嵌运行',
+                icon: Icons.memory,
+                colorScheme: colorScheme,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildModeRadio(
                 value: ConnectionMode.remote,
                 title: '远程',
                 subtitle: '通过 SSH 连接远程服务器',
@@ -818,7 +832,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         break;
     }
 
-    final modeText = state.mode == ConnectionMode.local ? '本地' : '远程';
+    final modeText = switch (state.mode) {
+      ConnectionMode.local => '本地',
+      ConnectionMode.embedded => '内嵌',
+      ConnectionMode.remote => '远程',
+    };
     final portText = state.port.toString();
 
     return Container(

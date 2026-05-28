@@ -28,6 +28,12 @@ class LocalDatabase {
     return suffix.isEmpty ? '${base}.json' : '${base}$suffix.json';
   }
 
+  String connectionModeToDbSuffix(String mode) {
+    if (mode == 'local') return '';
+    if (mode == 'embedded') return '_embedded';
+    return '_${mode.replaceAll(RegExp(r'[^a-zA-Z0-9_\\-]'), '_')}';
+  }
+
   Map<String, dynamic>? _cache;
 
   Future<Map<String, dynamic>> _read() async {
