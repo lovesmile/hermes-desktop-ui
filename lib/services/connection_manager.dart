@@ -168,8 +168,10 @@ class ConnectionManager {
     }
 
     final joined = args.map((a) => "'${a.replaceAll("'", "'\\''")}'").join(' ');
-    final cmd = 'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
+    final cmd = 'export PATH="\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH"; '
+        'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
         'if [ -z "\$HERMES_BIN" ] && [ -x "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
+        'if [ -z "\$HERMES_BIN" ] && [ -f "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
         'if [ -z "\$HERMES_BIN" ]; then echo "hermes command not found"; exit 127; fi; '
         '"\$HERMES_BIN" --accept-hooks cron $joined 2>&1';
     return runShell(cmd, allowFailure: allowFailure);
@@ -186,8 +188,10 @@ class ConnectionManager {
       return 'if exist "$hermesExe" ( "$hermesExe" --accept-hooks cron $suffix ) else ( hermes --accept-hooks cron $suffix )';
     }
 
-    return 'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
+    return 'export PATH="\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH"; '
+        'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
         'if [ -z "\$HERMES_BIN" ] && [ -x "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
+        'if [ -z "\$HERMES_BIN" ] && [ -f "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
         'if [ -z "\$HERMES_BIN" ]; then echo "hermes command not found"; exit 127; fi; '
         '"\$HERMES_BIN" --accept-hooks cron $suffix';
   }

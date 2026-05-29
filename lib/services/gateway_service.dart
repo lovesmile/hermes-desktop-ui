@@ -655,20 +655,13 @@ class GatewayService {
     final logs = <LogEntry>[];
     try {
       final logSource = source ?? 'agent';
-      final logPath = '$_hermesHome/logs/$logSource.log';
       String? content;
 
-      // Try direct file read first
-      final file = File(logPath);
-      if (await file.exists()) {
-        content = await file.readAsString();
-      } else if (Platform.isWindows) {
-        // On Windows, try reading via WSL
-        final result = await ConnectionManager().execBash(
-            'cat "$_hermesHome/logs/$logSource.log" 2>/dev/null');
-        final stdout = result.stdout as String;
-        if (stdout.isNotEmpty) content = stdout;
-      }
+      // Use bridge-based reading (WSL/local/remote compatible)
+      final result = await ConnectionManager().runShell(
+          'cat "$_hermesHome/logs/$logSource.log" 2>/dev/null || true',
+          allowFailure: true);
+      if (result.stdout.isNotEmpty) content = result.stdout;
 
       if (content != null && content.isNotEmpty) {
         final lines = content.split('\n');
