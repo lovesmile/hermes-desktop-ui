@@ -121,13 +121,75 @@ class ConnectionManager {
     String cmd, {
     bool allowFailure = false,
   }) async {
+    final normalizedCmd = _normalizeCronCommand(cmd);
     try {
-      final out = await _bridgeForMode(state.mode).exec(cmd);
+      final out = await _bridgeForMode(state.mode).exec(normalizedCmd);
       return (stdout: out.stdout, exitCode: out.exitCode);
     } catch (e) {
       if (allowFailure) return (stdout: e.toString(), exitCode: 1);
       rethrow;
     }
+  }
+
+  Future<String> resolveHermesHome() async {
+    if (state.mode == ConnectionMode.embedded) {
+      final userHome = Platform.environment['USERPROFILE'] ??
+          Platform.environment['HOME'] ??
+          '';
+      return '$userHome\\.hermes';
+    }
+    final r = await runShell('echo \$HOME', allowFailure: true);
+    final home = r.stdout.trim().isNotEmpty ? r.stdout.trim() : r'$HOME';
+    return '$home/.hermes';
+  }
+
+  Future<({String stdout, int exitCode})> readTextFile(
+    String path, {
+    bool allowFailure = false,
+  }) {
+    if (state.mode == ConnectionMode.embedded) {
+      return runShell('type "${path.replaceAll('"', '""')}" 2>nul',
+          allowFailure: allowFailure);
+    }
+    return runShell("cat '${path.replaceAll("'", "'\\''")}' 2>/dev/null",
+        allowFailure: allowFailure);
+  }
+
+  Future<({String stdout, int exitCode})> runHermesCron(
+    List<String> args, {
+    bool allowFailure = false,
+  }) {
+    if (state.mode == ConnectionMode.embedded) {
+      final hermesExe = '$hermesBundlePath\\hermes.exe';
+      final joined = args.map((a) => '"${a.replaceAll('"', '""')}"').join(' ');
+      final cmd =
+          'if exist "${hermesExe.replaceAll('"', '""')}" ( "${hermesExe.replaceAll('"', '""')}" --accept-hooks cron $joined ) else ( hermes --accept-hooks cron $joined ) 2>&1';
+      return runShell(cmd, allowFailure: allowFailure);
+    }
+
+    final joined = args.map((a) => "'${a.replaceAll("'", "'\\''")}'").join(' ');
+    final cmd = 'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
+        'if [ -z "\$HERMES_BIN" ] && [ -x "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
+        'if [ -z "\$HERMES_BIN" ]; then echo "hermes command not found"; exit 127; fi; '
+        '"\$HERMES_BIN" --accept-hooks cron $joined 2>&1';
+    return runShell(cmd, allowFailure: allowFailure);
+  }
+
+  String _normalizeCronCommand(String cmd) {
+    final trim = cmd.trim();
+    if (!trim.startsWith('hermes --accept-hooks cron ')) return cmd;
+
+    final suffix = trim.substring('hermes --accept-hooks cron '.length);
+
+    if (state.mode == ConnectionMode.embedded) {
+      final hermesExe = '$hermesBundlePath\\hermes.exe'.replaceAll('"', '""');
+      return 'if exist "$hermesExe" ( "$hermesExe" --accept-hooks cron $suffix ) else ( hermes --accept-hooks cron $suffix )';
+    }
+
+    return 'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
+        'if [ -z "\$HERMES_BIN" ] && [ -x "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
+        'if [ -z "\$HERMES_BIN" ]; then echo "hermes command not found"; exit 127; fi; '
+        '"\$HERMES_BIN" --accept-hooks cron $suffix';
   }
 
   Future<ProcessResult> execBash(String command) async {
