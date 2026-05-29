@@ -160,7 +160,7 @@ class _SetupScreenState extends State<SetupScreen> {
     }
   }
 
-  
+
   Future<void> _startEmbeddedMode() async {
     setState(() {
       _working = true;

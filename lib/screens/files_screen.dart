@@ -1,9 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+
 import '../config/theme.dart';
 import '../services/connection_manager.dart';
 
 class FilesScreen extends StatefulWidget {
   const FilesScreen({super.key});
+
   @override
   State<FilesScreen> createState() => _FilesScreenState();
 }
@@ -12,6 +14,7 @@ class _FilesScreenState extends State<FilesScreen> {
   final _cm = ConnectionManager();
 
   String _currentPath = '';
+  String _basePath = '';
   List<_FileItem> _items = [];
   bool _loading = true;
   String? _error;
@@ -31,6 +34,7 @@ class _FilesScreenState extends State<FilesScreen> {
 
   void _onConnectionChanged() {
     if (_cm.state.status == ConnStatus.connected && mounted) {
+      _currentPath = '';
       _loadFiles();
     }
   }
@@ -38,20 +42,22 @@ class _FilesScreenState extends State<FilesScreen> {
   Future<void> _loadFiles() async {
     setState(() => _loading = true);
     try {
-      final home = r'$HOME';
-      final path = _currentPath.isEmpty ? home : '$home/${_currentPath}';
-      final cmd = 'ls -1la "$path" 2>/dev/null || echo "ERR:目录不存在或权限不足"';
+      final homeRes = await _cm.runShell('echo \$HOME', allowFailure: true);
+      final home = homeRes.stdout.trim().isNotEmpty ? homeRes.stdout.trim() : r'$HOME';
+      _basePath = home;
 
-      String rawOutput;
-      if (_cm.state.mode == ConnectionMode.remote) {
-        rawOutput = await _cm.execRemote(cmd);
-      } else {
-        final r = await _cm.execBash(cmd);
-        rawOutput = r.stdout as String;
-      }
+      final path = _currentPath.isEmpty ? home : '$home/$_currentPath';
+      final cmd = 'ls -1la "$path" 2>/dev/null || echo "ERR:directory not found or permission denied"';
+      final result = await _cm.execBash(cmd);
+      final rawOutput = (result.stdout as String).trim();
 
       if (rawOutput.startsWith('ERR:')) {
-        if (mounted) setState(() { _error = rawOutput; _loading = false; });
+        if (mounted) {
+          setState(() {
+            _error = rawOutput;
+            _loading = false;
+          });
+        }
         return;
       }
 
@@ -59,28 +65,37 @@ class _FilesScreenState extends State<FilesScreen> {
       for (final line in rawOutput.split('\n')) {
         final t = line.trim();
         if (t.isEmpty) continue;
-        // ls -1la output: drwxr-xr-x 2 user group 4096 May 24 10:00 name
         final parts = t.split(RegExp(r'\s+'));
         if (parts.length < 8) continue;
+
         final isDir = parts[0].startsWith('d');
         final size = int.tryParse(parts[4]) ?? 0;
         final name = parts.sublist(7).join(' ');
         if (name == '.' || name == '..') continue;
-        items.add(_FileItem(
-          name: name,
-          isDir: isDir,
-          size: size,
-        ));
+
+        items.add(_FileItem(name: name, isDir: isDir, size: size));
       }
-      // 排序：文件夹在前，字母序
+
       items.sort((a, b) {
         if (a.isDir && !b.isDir) return -1;
         if (!a.isDir && b.isDir) return 1;
         return a.name.compareTo(b.name);
       });
-      if (mounted) setState(() { _items = items; _error = null; _loading = false; });
+
+      if (mounted) {
+        setState(() {
+          _items = items;
+          _error = null;
+          _loading = false;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() { _error = '$e'; _loading = false; });
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -91,8 +106,10 @@ class _FilesScreenState extends State<FilesScreen> {
 
   void _goBack() {
     final parts = _currentPath.split('/');
-    parts.removeLast();
-    _currentPath = parts.join('/');
+    if (parts.isNotEmpty) {
+      parts.removeLast();
+      _currentPath = parts.join('/');
+    }
     _loadFiles();
   }
 
@@ -105,13 +122,23 @@ class _FilesScreenState extends State<FilesScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final pathLabel = _currentPath.isEmpty ? _basePath : '$_basePath/$_currentPath';
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(_currentPath.isEmpty ? '~/' : '~/$_currentPath'),
+        title: Text(pathLabel.isEmpty ? '~/' : pathLabel),
         actions: [
           if (_currentPath.isNotEmpty)
-            IconButton(icon: const Icon(Icons.arrow_upward), onPressed: _goBack, tooltip: '上级'),
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadFiles, tooltip: '刷新'),
+            IconButton(
+              icon: const Icon(Icons.arrow_upward),
+              onPressed: _goBack,
+              tooltip: '上级',
+            ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadFiles,
+            tooltip: '刷新',
+          ),
         ],
       ),
       body: _loading
@@ -155,11 +182,21 @@ class _FilesScreenState extends State<FilesScreen> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text(item.name,
-                                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                                        Text(
+                                          item.name,
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
                                         if (!item.isDir && item.size > 0)
-                                          Text(_fmtSize(item.size),
-                                              style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+                                          Text(
+                                            _fmtSize(item.size),
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: cs.onSurfaceVariant,
+                                            ),
+                                          ),
                                       ],
                                     ),
                                   ),
@@ -178,5 +215,6 @@ class _FileItem {
   final String name;
   final bool isDir;
   final int size;
+
   const _FileItem({required this.name, required this.isDir, this.size = 0});
 }

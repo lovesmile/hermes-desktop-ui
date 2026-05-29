@@ -507,7 +507,7 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
     try {
       // 查找脚本：优先 ~/.hermes/scripts/，其次项目默认位置
       final findScript = await ConnectionManager().runShell(
-        'ls ~/.hermes/scripts/wechat_qr_login_full.py 2>/dev/null || '
+        'ls "\$HOME/.hermes/scripts/wechat_qr_login_full.py" 2>/dev/null || '
         'ls scripts/wechat_qr_login_full.py 2>/dev/null || echo ""',
         allowFailure: true,
       );
@@ -519,12 +519,10 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
       }
       // 确保是绝对路径（通过 ~ 扩展）
       if (!scriptPath.startsWith('/')) {
-        scriptPath = '~/.hermes/scripts/wechat_qr_login_full.py';
+        scriptPath = r'$HOME/.hermes/scripts/wechat_qr_login_full.py';
       }
-      _wechatProcess = await Process.start(
-        'wsl.exe',
-        ['-d', 'Ubuntu', 'bash', '-c', 'python3 $scriptPath'],
-      );
+      _wechatProcess =
+          await ConnectionManager().startShellProcess('python3 $scriptPath');
 
       _wechatSubscription = _wechatProcess!.stdout
           .transform(utf8.decoder)
@@ -665,9 +663,13 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
   /// Save WeChat credentials to .env via runShell and restart gateway
   Future<void> _saveWechatConfig(String botId, String token, String baseUrl) async {
     try {
+      final homeRes = await ConnectionManager().runShell('echo \$HOME', allowFailure: true);
+      final home = homeRes.stdout.trim().isNotEmpty ? homeRes.stdout.trim() : r'$HOME';
+      final envPath = '$home/.hermes/.env';
+
       // Read current .env
       final readResult = await ConnectionManager().runShell(
-        'cat ~/.hermes/.env 2>/dev/null || echo ""',
+        'cat "$envPath" 2>/dev/null || echo ""',
         allowFailure: true,
       );
       String envContent = readResult.stdout;
@@ -705,7 +707,7 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
       // Write .env via base64 (avoid shell escaping issues)
       final b64 = base64Encode(utf8.encode(envContent));
       await ConnectionManager().runShell(
-        'echo "$b64" | base64 -d > ~/.hermes/.env',
+        'echo "$b64" | base64 -d > "$envPath"',
       );
 
       if (!mounted) return;

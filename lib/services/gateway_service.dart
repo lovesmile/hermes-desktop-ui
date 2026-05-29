@@ -665,7 +665,7 @@ class GatewayService {
       } else if (Platform.isWindows) {
         // On Windows, try reading via WSL
         final result = await ConnectionManager().execBash(
-            'cat ~/.hermes/logs/$logSource.log 2>/dev/null');
+            'cat "$_hermesHome/logs/$logSource.log" 2>/dev/null');
         final stdout = result.stdout as String;
         if (stdout.isNotEmpty) content = stdout;
       }
@@ -713,7 +713,7 @@ class GatewayService {
         return true;
       } else if (Platform.isWindows) {
         final result = await ConnectionManager().execBash(
-            '> ~/.hermes/logs/$source.log 2>/dev/null');
+            '> "$_hermesHome/logs/$source.log" 2>/dev/null');
         return result.exitCode == 0;
       }
       return false;

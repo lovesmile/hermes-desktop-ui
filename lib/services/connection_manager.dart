@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -107,12 +107,6 @@ class ConnectionManager {
     stateNotifier.value =
         ConnectionInfo(status: ConnStatus.disconnected, mode: mode, port: port);
 
-    final ns = mode == ConnectionMode.remote && ssh.isValid
-        ? remoteNamespaceOf(ssh)
-        : (mode == ConnectionMode.embedded ? 'embedded' : 'local');
-    await LocalDatabase().setMode(ns);
-    ConfigService().setMode(ns);
-
     _startHealthCheck();
     if (mode == ConnectionMode.remote && ssh.isValid) {
       await connectRemote(ssh);
@@ -139,6 +133,17 @@ class ConnectionManager {
   Future<ProcessResult> execBash(String command) async {
     final res = await runShell(command, allowFailure: true);
     return ProcessResult(0, res.exitCode, res.stdout, '');
+  }
+
+  Future<Process> startShellProcess(String command) {
+    switch (state.mode) {
+      case ConnectionMode.local:
+        return Process.start('wsl.exe', ['-d', _wslDistro, 'bash', '-c', command]);
+      case ConnectionMode.embedded:
+        return Process.start('cmd.exe', ['/c', command]);
+      case ConnectionMode.remote:
+        throw UnsupportedError('Streaming shell process is not supported in remote mode');
+    }
   }
 
   Future<String> execRemote(String command) async {
@@ -178,9 +183,7 @@ class ConnectionManager {
       localPort: state.port,
     )) {
       final ns = remoteNamespaceOf(config);
-      await LocalDatabase().setMode(ns);
-      ConfigService().setMode(ns);
-      await GatewayService().refreshBaseUrl();
+      await _applyConnectionContext(namespace: ns, serverId: config.host);
       stateNotifier.value =
           state.copyWith(status: ConnStatus.connected, message: 'Զ������');
       return true;
@@ -201,8 +204,7 @@ class ConnectionManager {
       message: '�л�����ģʽ...',
     );
     await _wslBridge.connect();
-    await LocalDatabase().setMode('local');
-    ConfigService().setMode('local');
+    await _applyConnectionContext(namespace: 'local', serverId: 'local');
     await checkLocal();
   }
 
@@ -214,8 +216,7 @@ class ConnectionManager {
       message: '�л���Ƕģʽ...',
     );
     await _embeddedBridge.connect();
-    await LocalDatabase().setMode('embedded');
-    ConfigService().setMode('embedded');
+    await _applyConnectionContext(namespace: 'embedded', serverId: 'embedded');
     await checkLocal();
   }
 
@@ -348,6 +349,15 @@ class ConnectionManager {
       ]);
     }
   }
+  Future<void> _applyConnectionContext({
+    required String namespace,
+    required String serverId,
+  }) async {
+    await LocalDatabase().setMode(namespace);
+    ConfigService().setMode(namespace);
+    await GatewayService().refreshBaseUrl();
+    GatewayService().setServerId(serverId);
+  }
 
   HermesBridge _bridgeForMode(ConnectionMode mode) {
     switch (mode) {
@@ -373,3 +383,4 @@ class SshConfigWrapper extends SshConfig {
 
   bool get useKeyAuth => false;
 }
+

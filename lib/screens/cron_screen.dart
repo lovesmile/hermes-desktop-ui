@@ -28,7 +28,9 @@ class _CronScreenState extends State<CronScreen> {
 
   /// 从本地文件读取定时任务列表
   Future<List<CronJob>> _readJobsFromFile() async {
-    final result = await _cm.execBash('cat ~/.hermes/cron/jobs.json 2>/dev/null');
+    final homeRes = await _cm.runShell('echo \$HOME', allowFailure: true);
+    final home = homeRes.stdout.trim().isNotEmpty ? homeRes.stdout.trim() : r'$HOME';
+    final result = await _cm.execBash('cat "$home/.hermes/cron/jobs.json" 2>/dev/null');
     final stdout = (result.stdout as String).trim();
     if (stdout.isEmpty) return [];
     final json = jsonDecode(stdout);
@@ -56,9 +58,11 @@ class _CronScreenState extends State<CronScreen> {
 
   /// 写入定时任务到本地文件
   Future<void> _writeJobsToFile(List jobsData) async {
+    final homeRes = await _cm.runShell('echo \$HOME', allowFailure: true);
+    final home = homeRes.stdout.trim().isNotEmpty ? homeRes.stdout.trim() : r'$HOME';
     final jsonStr = jsonEncode({'jobs': jobsData});
     final b64 = base64Encode(utf8.encode(jsonStr));
-    await _cm.execBash('echo "$b64" | base64 -d > ~/.hermes/cron/jobs.json');
+    await _cm.execBash('echo "$b64" | base64 -d > "$home/.hermes/cron/jobs.json"');
   }
 
   Future<void> _loadJobs() async {
