@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
@@ -18,15 +18,16 @@ class _CronScreenState extends State<CronScreen> {
   final _gateway = GatewayService();
   final _configService = ConfigService();
   List<CronJob> _jobs = [];
+  List<String> _skillsCache = [];
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
+    unawaited(_prefetchSkills());
     _loadJobs();
   }
 
-  /// 从本地文件读取定时任务列表
   Future<List<CronJob>> _readJobsFromFile() async {
     final homeRes = await _cm.runShell('echo \$HOME', allowFailure: true);
     final home = homeRes.stdout.trim().isNotEmpty ? homeRes.stdout.trim() : r'$HOME';
@@ -46,7 +47,7 @@ class _CronScreenState extends State<CronScreen> {
       }
       return CronJob(
         id: map['id'] ?? '',
-        name: map['name'] ?? '未命名任务',
+        name: map['name'] ?? '未知任务',
         schedule: schedStr,
         prompt: map['prompt'] ?? '',
         status: map['status'] ?? (map['enabled'] == false ? 'paused' : 'active'),
@@ -56,7 +57,6 @@ class _CronScreenState extends State<CronScreen> {
     }).toList();
   }
 
-  /// 写入定时任务到本地文件
   Future<void> _writeJobsToFile(List jobsData) async {
     final homeRes = await _cm.runShell('echo \$HOME', allowFailure: true);
     final home = homeRes.stdout.trim().isNotEmpty ? homeRes.stdout.trim() : r'$HOME';
@@ -75,18 +75,35 @@ class _CronScreenState extends State<CronScreen> {
     }
   }
 
+  Future<void> _prefetchSkills() async {
+    try {
+      final skills = await _configService.getSkills();
+      final names = skills
+          .map((s) => (s['name'] ?? '').toString())
+          .where((n) => n.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+      if (mounted) {
+        setState(() => _skillsCache = names);
+      } else {
+        _skillsCache = names;
+      }
+    } catch (_) {}
+  }
+
   Future<void> _toggleJob(CronJob job) async {
     try {
       final cmd = job.isActive ? 'pause' : 'resume';
-      final result = await _cm.execBash('hermes --accept-hooks cron $cmd ${job.id} 2>&1');
-      final out = (result.stdout as String).trim();
+      final result = await _cm.runHermesCron([cmd, job.id], allowFailure: true);
+      final out = result.stdout.trim();
       if (result.exitCode != 0) {
-        throw Exception(out.isNotEmpty ? out : 'hermes --accept-hooks cron $cmd failed (exit ${result.exitCode})');
+        throw Exception(out.isNotEmpty ? out : 'hermes cron $cmd failed (exit ${result.exitCode})');
       }
       _loadJobs();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(job.isActive ? '已暂停: ${job.name}' : '已恢复: ${job.name}')),
+          SnackBar(content: Text(job.isActive ? '已暂停 ${job.name}' : '已恢复 ${job.name}')),
         );
       }
     } catch (e) {
@@ -100,14 +117,14 @@ class _CronScreenState extends State<CronScreen> {
 
   Future<void> _runJob(CronJob job) async {
     try {
-      final result = await _cm.execBash('hermes --accept-hooks cron run ${job.id} 2>&1');
-      final out = (result.stdout as String).trim();
+      final result = await _cm.runHermesCron(['run', job.id], allowFailure: true);
+      final out = result.stdout.trim();
       if (result.exitCode != 0) {
-        throw Exception(out.isNotEmpty ? out : 'hermes --accept-hooks cron run failed (exit ${result.exitCode})');
+        throw Exception(out.isNotEmpty ? out : 'hermes cron run failed (exit ${result.exitCode})');
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('任务已触发: ${job.name}')),
+          SnackBar(content: Text('任务已触发 ${job.name}')),
         );
       }
     } catch (e) {
@@ -134,15 +151,15 @@ class _CronScreenState extends State<CronScreen> {
     );
     if (confirmed == true) {
       try {
-        final result = await _cm.execBash('hermes --accept-hooks cron remove ${job.id} 2>&1');
-        final out = (result.stdout as String).trim();
+        final result = await _cm.runHermesCron(['remove', job.id], allowFailure: true);
+        final out = result.stdout.trim();
         if (result.exitCode != 0) {
-          throw Exception(out.isNotEmpty ? out : 'hermes --accept-hooks cron remove failed (exit ${result.exitCode})');
+          throw Exception(out.isNotEmpty ? out : 'hermes cron remove failed (exit ${result.exitCode})');
         }
         _loadJobs();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('已删除: ${job.name}')),
+            SnackBar(content: Text('已删除 ${job.name}')),
           );
         }
       } catch (e) {
@@ -164,13 +181,10 @@ class _CronScreenState extends State<CronScreen> {
     int minute = 0;
     int dayOfMonth = 1;
     List<String> selectedSkills = [];
-    List<String> allSkills = [];
-
-    // 懒加载技能列表
-    try {
-      final skills = await _configService.getSkills();
-      allSkills = skills.map((s) => s['name'] ?? '').where((n) => n.isNotEmpty).toList()..sort();
-    } catch (_) {}
+    if (_skillsCache.isEmpty) {
+      await _prefetchSkills();
+    }
+    final allSkills = List<String>.from(_skillsCache);
 
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -193,7 +207,6 @@ class _CronScreenState extends State<CronScreen> {
                   const Text('添加定时任务',
                       style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 20),
-                  // 任务名称
                   TextField(
                     controller: nameController,
                     decoration: const InputDecoration(
@@ -202,7 +215,6 @@ class _CronScreenState extends State<CronScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  // 执行时间 + 时/分
                   DropdownButtonFormField<String>(
                     value: scheduleType,
                     decoration: const InputDecoration(labelText: '执行时间', isDense: true),
@@ -251,7 +263,6 @@ class _CronScreenState extends State<CronScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  // 技能选择 — 搜索 + 下拉多选
                   const Text('技能选择', style: TextStyle(fontSize: 13)),
                   const SizedBox(height: 4),
                   TextField(
@@ -277,7 +288,6 @@ class _CronScreenState extends State<CronScreen> {
                         )).toList(),
                       ),
                     ),
-                  // 固定高度的技能下拉列表
                   Container(
                     height: 120,
                     decoration: BoxDecoration(
@@ -312,7 +322,6 @@ class _CronScreenState extends State<CronScreen> {
                           ),
                   ),
                   const SizedBox(height: 16),
-                  // 执行描述
                   TextField(
                     controller: promptController,
                     maxLines: 4,
@@ -357,7 +366,6 @@ class _CronScreenState extends State<CronScreen> {
     );
 
     if (result == null) return;
-    // 显示加载弹窗
     if (!mounted) return;
     showDialog(
       context: context,
@@ -379,7 +387,6 @@ class _CronScreenState extends State<CronScreen> {
       ),
     );
 
-    // 通过 hermes CLI 创建定时任务
     try {
       final cronExpr = switch (result['scheduleType'] as String) {
         '每天' => '${result['minute']} ${result['hour']} * * *',
@@ -392,46 +399,35 @@ class _CronScreenState extends State<CronScreen> {
       final prompt = (result['prompt'] as String).trim();
       final skills = result['skills'] as List<String>? ?? [];
 
-      // Build the command
-      final buf = StringBuffer('hermes --accept-hooks cron create');
-      buf.write(' "${cronExpr.replaceAll(' ', ' ')}"');
-      if (prompt.isNotEmpty) {
-        buf.write(' ${_shellQuote(prompt)}');
-      }
-      buf.write(' --name ${_shellQuote(name)}');
+      final args = <String>['create', cronExpr];
+      if (prompt.isNotEmpty) args.add(prompt);
+      args.addAll(['--name', name]);
       for (final s in skills) {
-        buf.write(' --skill ${_shellQuote(s)}');
+        args.addAll(['--skill', s]);
       }
 
-      final shellCmd = buf.toString();
-      final cmdResult = await _cm.execBash('$shellCmd 2>&1');
-      final cmdOut = (cmdResult.stdout as String).trim();
+      final cmdResult = await _cm.runHermesCron(args, allowFailure: true);
+      final out = cmdResult.stdout.trim();
       if (cmdResult.exitCode != 0) {
-        throw Exception(cmdOut.isNotEmpty ? cmdOut : 'hermes --accept-hooks cron create failed');
+        throw Exception(out.isNotEmpty ? out : 'hermes cron create failed (exit ${cmdResult.exitCode})');
       }
 
       await _loadJobs();
 
       if (mounted) {
-        Navigator.pop(context); // 关闭加载弹窗
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('任务已创建')),
         );
       }
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context); // 关闭加载弹窗
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('创建失败: $e')),
         );
       }
     }
-  }
-
-  /// Shell-escape a string for single-quote usage on Linux
-  String _shellQuote(String s) {
-    // Use single quotes, escape any single quotes inside
-    return "'${s.replaceAll("'", "'\\''")}'";
   }
 
   Future<void> _editJob(CronJob job) async {
@@ -442,7 +438,6 @@ class _CronScreenState extends State<CronScreen> {
     final hour = parts.length > 1 ? int.tryParse(parts[1]) ?? 9 : 9;
     final minute = parts.length > 0 ? int.tryParse(parts[0]) ?? 0 : 0;
     final dayField = parts.length > 2 ? parts[2] : '*';
-    // Determine schedule type
     String scheduleType;
     if (dayField == '*') {
       scheduleType = parts.length > 4 && parts[4] == '1-5' ? '工作日' : '每天';
@@ -451,7 +446,6 @@ class _CronScreenState extends State<CronScreen> {
     }
     final dayOfMonth = int.tryParse(dayField) ?? 1;
 
-    // Reuse add dialog with pre-filled values
     final result = await _showEditJobDialog(
       initialName: name,
       initialPrompt: prompt,
@@ -463,7 +457,6 @@ class _CronScreenState extends State<CronScreen> {
     );
     if (result == null || !mounted) return;
 
-    // Execute hermes cron edit
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -496,26 +489,24 @@ class _CronScreenState extends State<CronScreen> {
       final newPrompt = (result['prompt'] as String).trim();
       final skills = result['skills'] as List<String>? ?? [];
 
-      final buf = StringBuffer('hermes --accept-hooks cron edit ${job.id}');
-      buf.write(' --schedule "$cronExpr"');
+      final args = <String>['edit', job.id, '--schedule', cronExpr];
       if (newName != name) {
-        buf.write(' --name ${_shellQuote(newName)}');
+        args.addAll(['--name', newName]);
       }
       if (newPrompt != prompt) {
-        buf.write(' --prompt ${_shellQuote(newPrompt)}');
+        args.addAll(['--prompt', newPrompt]);
       }
       if (skills.isNotEmpty) {
-        buf.write(' --clear-skills');
+        args.add('--clear-skills');
         for (final s in skills) {
-          buf.write(' --skill ${_shellQuote(s)}');
+          args.addAll(['--skill', s]);
         }
       }
 
-      final shellCmd = buf.toString();
-      final cmdResult = await _cm.execBash('$shellCmd 2>&1');
-      final cmdOut = (cmdResult.stdout as String).trim();
+      final cmdResult = await _cm.runHermesCron(args, allowFailure: true);
+      final out = cmdResult.stdout.trim();
       if (cmdResult.exitCode != 0) {
-        throw Exception(cmdOut.isNotEmpty ? cmdOut : 'hermes cron edit failed');
+        throw Exception(out.isNotEmpty ? out : 'hermes cron edit failed (exit ${cmdResult.exitCode})');
       }
 
       await _loadJobs();
@@ -535,7 +526,6 @@ class _CronScreenState extends State<CronScreen> {
     }
   }
 
-  /// 编辑任务的弹窗 — 复用添加弹窗逻辑但预填现有值
   Future<Map<String, dynamic>?> _showEditJobDialog({
     required String initialName,
     required String initialPrompt,
@@ -545,6 +535,9 @@ class _CronScreenState extends State<CronScreen> {
     required int initialDayOfMonth,
     required List<String> initialSkills,
   }) async {
+    if (_skillsCache.isEmpty) {
+      await _prefetchSkills();
+    }
     final nameController = TextEditingController(text: initialName);
     final skillSearchController = TextEditingController();
     final promptController = TextEditingController(text: initialPrompt);
@@ -553,12 +546,7 @@ class _CronScreenState extends State<CronScreen> {
     int minute = initialMinute;
     int dayOfMonth = initialDayOfMonth;
     List<String> selectedSkills = List.from(initialSkills);
-    List<String> allSkills = [];
-
-    try {
-      final skills = await _configService.getSkills();
-      allSkills = skills.map((s) => s['name'] ?? '').where((n) => n.isNotEmpty).toList()..sort();
-    } catch (_) {}
+    final allSkills = List<String>.from(_skillsCache);
 
     return showDialog<Map<String, dynamic>>(
       context: context,
