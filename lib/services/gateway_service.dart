@@ -76,7 +76,7 @@ class GatewayService {
   String get _hermesHome {
     if (_cachedHermesHome != null) return _cachedHermesHome!;
     final home = ConfigService.resolveHermesHome();
-    if (_serverId == 'local') {
+    if (_serverId == 'local' || _serverId == 'embedded') {
       _cachedHermesHome = home;
     } else {
       // 远程服务器数据缓存到 ~/.hermes/cache/<server_id>/
@@ -657,11 +657,18 @@ class GatewayService {
       final logSource = source ?? 'agent';
       String? content;
 
-      // Use bridge-based reading (WSL/local/remote compatible)
-      final result = await ConnectionManager().runShell(
-          'cat "$_hermesHome/logs/$logSource.log" 2>/dev/null || true',
-          allowFailure: true);
-      if (result.stdout.isNotEmpty) content = result.stdout;
+      if (ConnectionManager().state.mode == ConnectionMode.embedded) {
+        try {
+          final f = File('$_hermesHome/logs/$logSource.log');
+          if (await f.exists()) content = await f.readAsString();
+        } catch (_) {}
+      } else {
+        // Use bridge-based reading (WSL/local/remote compatible)
+        final result = await ConnectionManager().runShell(
+            'cat "$_hermesHome/logs/$logSource.log" 2>/dev/null || true',
+            allowFailure: true);
+        if (result.stdout.isNotEmpty) content = result.stdout;
+      }
 
       if (content != null && content.isNotEmpty) {
         final lines = content.split('\n');
@@ -704,12 +711,11 @@ class GatewayService {
       if (await file.exists()) {
         await file.writeAsString('');
         return true;
-      } else if (Platform.isWindows) {
-        final result = await ConnectionManager().execBash(
-            '> "$_hermesHome/logs/$source.log" 2>/dev/null');
-        return result.exitCode == 0;
+      } else {
+        // 文件不存在时创建空文件
+        await file.create(recursive: true);
+        return true;
       }
-      return false;
     } catch (_) {
       return false;
     }

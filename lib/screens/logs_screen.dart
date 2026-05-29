@@ -35,10 +35,12 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
       if (!_tabController.indexIsChanging) _loadLogs();
     });
     _loadLogs();
+    GatewayService().refreshNotifier.addListener(_loadLogs);
   }
 
   @override
   void dispose() {
+    GatewayService().refreshNotifier.removeListener(_loadLogs);
     _tabController.dispose();
     _searchController.dispose();
     _scrollController.dispose();

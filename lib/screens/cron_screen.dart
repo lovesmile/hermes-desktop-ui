@@ -1,9 +1,11 @@
 ﻿import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/connection_manager.dart';
 import '../services/config_service.dart';
+import '../services/hermes_file_service.dart';
 import '../services/gateway_service.dart';
 import '../models/cron_job.dart';
 
@@ -17,6 +19,7 @@ class _CronScreenState extends State<CronScreen> {
   final _cm = ConnectionManager();
   final _gateway = GatewayService();
   final _configService = ConfigService();
+  final _fileService = HermesFileService();
   List<CronJob> _jobs = [];
   List<String> _skillsCache = [];
   bool _loading = true;
@@ -26,43 +29,58 @@ class _CronScreenState extends State<CronScreen> {
     super.initState();
     unawaited(_prefetchSkills());
     _loadJobs();
+    GatewayService().refreshNotifier.addListener(_onModeChanged);
+  }
+
+  @override
+  void dispose() {
+    GatewayService().refreshNotifier.removeListener(_onModeChanged);
+    super.dispose();
+  }
+
+  void _onModeChanged() {
+    _skillsCache.clear();
+    _loadJobs();
+    unawaited(_prefetchSkills());
   }
 
   Future<List<CronJob>> _readJobsFromFile() async {
-    final homeRes = await _cm.runShell('echo \$HOME', allowFailure: true);
-    final home = homeRes.stdout.trim().isNotEmpty ? homeRes.stdout.trim() : r'$HOME';
-    final result = await _cm.execBash('cat "$home/.hermes/cron/jobs.json" 2>/dev/null');
-    final stdout = (result.stdout as String).trim();
-    if (stdout.isEmpty) return [];
-    final json = jsonDecode(stdout);
-    final list = json['jobs'] as List? ?? [];
-    return list.map((j) {
-      final map = j as Map<String, dynamic>;
-      final sched = map['schedule'];
-      String schedStr;
-      if (sched is Map) {
-        schedStr = sched['expr'] as String? ?? sched['kind'] as String? ?? '0 9 * * *';
-      } else {
-        schedStr = sched as String? ?? '0 9 * * *';
-      }
-      return CronJob(
-        id: map['id'] ?? '',
-        name: map['name'] ?? '未知任务',
-        schedule: schedStr,
-        prompt: map['prompt'] ?? '',
-        status: map['status'] ?? (map['enabled'] == false ? 'paused' : 'active'),
-        createdAt: DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
-        skillNames: map['skills'] != null ? List<String>.from(map['skills']) : null,
-      );
-    }).toList();
+    try {
+      final hermesHome = await _fileService.resolveHermesHome();
+      final content = await _fileService.readText('$hermesHome/cron/jobs.json');
+      if (content.isEmpty) return [];
+      final json = jsonDecode(content);
+      final list = json['jobs'] as List? ?? [];
+      return list.map((j) {
+        final map = j as Map<String, dynamic>;
+        final sched = map['schedule'];
+        String schedStr;
+        if (sched is Map) {
+          schedStr = sched['expr'] as String? ?? sched['kind'] as String? ?? '0 9 * * *';
+        } else {
+          schedStr = sched as String? ?? '0 9 * * *';
+        }
+        return CronJob(
+          id: map['id'] ?? '',
+          name: map['name'] ?? '未知任务',
+          schedule: schedStr,
+          prompt: map['prompt'] ?? '',
+          status: map['status'] ?? (map['enabled'] == false ? 'paused' : 'active'),
+          createdAt: DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
+          skillNames: map['skills'] != null ? List<String>.from(map['skills']) : null,
+        );
+      }).toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   Future<void> _writeJobsToFile(List jobsData) async {
-    final homeRes = await _cm.runShell('echo \$HOME', allowFailure: true);
-    final home = homeRes.stdout.trim().isNotEmpty ? homeRes.stdout.trim() : r'$HOME';
-    final jsonStr = jsonEncode({'jobs': jobsData});
-    final b64 = base64Encode(utf8.encode(jsonStr));
-    await _cm.execBash('echo "$b64" | base64 -d > "$home/.hermes/cron/jobs.json"');
+    try {
+      final hermesHome = await _fileService.resolveHermesHome();
+      final jsonStr = jsonEncode({'jobs': jobsData});
+      await _fileService.writeText('$hermesHome/cron/jobs.json', jsonStr);
+    } catch (_) {}
   }
 
   Future<void> _loadJobs() async {

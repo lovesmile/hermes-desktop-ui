@@ -6,6 +6,7 @@ import '../config/theme.dart';
 import '../services/gateway_service.dart';
 import '../services/config_service.dart';
 import '../services/connection_manager.dart';
+import '../services/hermes_file_service.dart';
 import '../models/platform_config.dart';
 
 class PlatformsScreen extends StatefulWidget {
@@ -25,6 +26,13 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
   void initState() {
     super.initState();
     _loadPlatforms();
+    GatewayService().refreshNotifier.addListener(_loadPlatforms);
+  }
+
+  @override
+  void dispose() {
+    GatewayService().refreshNotifier.removeListener(_loadPlatforms);
+    super.dispose();
   }
 
   Future<void> _loadPlatforms() async {
@@ -677,19 +685,14 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
     }
   }
 
-  /// Save WeChat credentials to .env via runShell and restart gateway
+  /// Save WeChat credentials to .env via file service and restart gateway
   Future<void> _saveWechatConfig(String botId, String token, String baseUrl) async {
     try {
-      final homeRes = await ConnectionManager().runShell('echo \$HOME', allowFailure: true);
-      final home = homeRes.stdout.trim().isNotEmpty ? homeRes.stdout.trim() : r'$HOME';
-      final envPath = '$home/.hermes/.env';
+      final hermesHome = await HermesFileService().resolveHermesHome();
+      final envPath = '$hermesHome/.env';
 
       // Read current .env
-      final readResult = await ConnectionManager().runShell(
-        'cat "$envPath" 2>/dev/null || echo ""',
-        allowFailure: true,
-      );
-      String envContent = readResult.stdout;
+      String envContent = await HermesFileService().readText(envPath);
 
       // Update or add WEIXIN_ACCOUNT_ID
       if (envContent.contains('WEIXIN_ACCOUNT_ID=')) {
@@ -721,11 +724,8 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
         envContent += '\nWEIXIN_BASE_URL=$baseUrl';
       }
 
-      // Write .env via base64 (avoid shell escaping issues)
-      final b64 = base64Encode(utf8.encode(envContent));
-      await ConnectionManager().runShell(
-        'echo "$b64" | base64 -d > "$envPath"',
-      );
+      // Write .env via file service
+      await HermesFileService().writeText(envPath, envContent);
 
       if (!mounted) return;
       setState(() {

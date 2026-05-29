@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/connection_manager.dart';
+import '../services/gateway_service.dart';
 import '../services/local_db.dart';
 import '../services/config_service.dart';
 import '../services/hermes_file_service.dart';
@@ -46,12 +47,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _loadData();
     widget.tabNotifier?.addListener(_onTabChanged);
     _cm.stateNotifier.addListener(_onConnectionChanged);
+    GatewayService().refreshNotifier.addListener(_loadData);
   }
 
   @override
   void dispose() {
     widget.tabNotifier?.removeListener(_onTabChanged);
     _cm.stateNotifier.removeListener(_onConnectionChanged);
+    GatewayService().refreshNotifier.removeListener(_loadData);
     super.dispose();
   }
 
@@ -122,10 +125,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (cronCount == 0) {
         try {
           final hermesHome = await _fileService.resolveHermesHome();
-          final result = await _cm.runShell('cat "$hermesHome/cron/jobs.json" 2>/dev/null || true', allowFailure: true);
-          final stdout = result.stdout.trim();
-          if (stdout.isNotEmpty) {
-            final json = jsonDecode(stdout);
+          final content = await _fileService.readText('$hermesHome/cron/jobs.json');
+          if (content.isNotEmpty) {
+            final json = jsonDecode(content);
             if (json is Map && json['jobs'] is List) {
               cronCount = (json['jobs'] as List).length;
             }

@@ -9,7 +9,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'config/theme.dart';
 import 'services/config_service.dart';
 import 'services/connection_manager.dart';
-import 'services/gateway_service.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/platforms_screen.dart';
@@ -123,8 +122,6 @@ class MainShellState extends State<MainShell> {
       _checkFirstSetup();
     });
     ConnectionManager().setupNotifier.addListener(_onSetupStateChanged);
-    // 监听服务器切换，刷新所有子页面
-    GatewayService().refreshNotifier.addListener(_onGatewayRefresh);
   }
 
   Future<void> _checkMaximized() async {
@@ -134,16 +131,9 @@ class MainShellState extends State<MainShell> {
     } catch (_) {}
   }
 
-  int _refreshKey = 0;
-
-  void _onGatewayRefresh() {
-    if (mounted) setState(() => _refreshKey++);
-  }
-
   @override
   void dispose() {
     ConnectionManager().setupNotifier.removeListener(_onSetupStateChanged);
-    GatewayService().refreshNotifier.removeListener(_onGatewayRefresh);
     super.dispose();
   }
 
@@ -159,13 +149,40 @@ class MainShellState extends State<MainShell> {
         (desktopConfig['api_key'] as String?)?.isNotEmpty == true;
 
     if (!hasGatewayUrl || !hasApiKey) {
-      _showSetupWizard();
+      // 先检测本地 WSL/hermes 环境
+      final hasLocalHermes = await _detectLocalHermes();
+      _showSetupWizard(detected: hasLocalHermes);
       return;
     }
 
     final ok = await ConnectionManager().checkAndSetup();
     if (!ok && mounted) {
       _showSetupDialog();
+    }
+  }
+
+  /// 检测本地是否有 WSL 和 Hermes
+  Future<bool> _detectLocalHermes() async {
+    try {
+      // 检查 WSL 是否可用
+      final wslResult = await Process.run('wsl.exe', ['--list', '--quiet']);
+      if (wslResult.exitCode != 0) return false;
+      final distros = (wslResult.stdout as String)
+          .split('\n')
+          .map((s) => s.trim().replaceAll('\x00', ''))
+          .where((s) => s.isNotEmpty)
+          .toList();
+      if (distros.isEmpty) return false;
+
+      // 在第一个 WSL 发行版中检查 hermes 命令
+      final checkResult = await Process.run('wsl.exe', [
+        '-d', distros.first, 'bash', '-c',
+        'command -v hermes 2>/dev/null && echo "EXISTS" || echo ""',
+      ]);
+      final out = (checkResult.stdout as String).trim();
+      return out.contains('EXISTS');
+    } catch (_) {
+      return false;
     }
   }
 
@@ -182,12 +199,13 @@ class MainShellState extends State<MainShell> {
     );
   }
 
-  void _showSetupWizard() async {
+  void _showSetupWizard({bool detected = false}) async {
     if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => _SetupWizardDialog(
+        localHermesDetected: detected,
         onComplete: () {},
       ),
     );
@@ -422,7 +440,6 @@ class MainShellState extends State<MainShell> {
                       ),
                       Expanded(
                         child: IndexedStack(
-                          key: ValueKey(_refreshKey),
                           index: _currentIndex,
                           children: [
                             DashboardScreen(onNavigate: navigateTo, tabNotifier: tabNotifier),
@@ -451,7 +468,9 @@ class MainShellState extends State<MainShell> {
 /// 首次启动配置向导
 class _SetupWizardDialog extends StatefulWidget {
   final VoidCallback onComplete;
-  const _SetupWizardDialog({required this.onComplete});
+  final bool localHermesDetected;
+
+  const _SetupWizardDialog({required this.onComplete, this.localHermesDetected = false});
 
   @override
   State<_SetupWizardDialog> createState() => _SetupWizardDialogState();
@@ -465,6 +484,17 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
   final _providerApiKeyCtrl = TextEditingController(text: '');
   bool _saving = false;
 
+  // 连接模式选择（未检测到本地时启用）
+  ConnectionMode _selectedMode = ConnectionMode.local;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.localHermesDetected) {
+      _selectedMode = ConnectionMode.local;
+    }
+  }
+
   @override
   void dispose() {
     _gatewayUrlCtrl.dispose();
@@ -473,14 +503,18 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
     super.dispose();
   }
 
-  Future<void> _save() async {
+  void _save() async {
     setState(() => _saving = true);
     try {
+      // 保存连接配置（含连接模式）
       final configService = ConfigService();
-      await configService.writeDesktopConfig({
-        'gateway_url': _gatewayUrlCtrl.text.trim(),
-        'api_key': _apiKeyCtrl.text.trim(),
-      });
+      final existingConfig = await configService.readDesktopConfig();
+      existingConfig['connection_mode'] = _selectedMode == ConnectionMode.remote
+          ? 'remote'
+          : (_selectedMode == ConnectionMode.embedded ? 'embedded' : 'local');
+      existingConfig['gateway_url'] = _gatewayUrlCtrl.text.trim();
+      existingConfig['api_key'] = _apiKeyCtrl.text.trim();
+      await configService.writeDesktopConfig(existingConfig);
 
       final hermesHome = ConfigService.resolveHermesHome();
       final configFile = File('$hermesHome/config.yaml');
@@ -525,10 +559,25 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('配置已保存，可开始使用')),
-        );
-        Navigator.pop(context);
+        // 根据选择模式尝试连接
+        try {
+          final cm = ConnectionManager();
+          if (_selectedMode == ConnectionMode.remote) {
+            // 远程模式需要 SSH 配置，这里只是记录，用户后续在设置页配置 SSH
+          } else if (_selectedMode == ConnectionMode.embedded) {
+            await cm.switchToEmbedded();
+          } else {
+            await cm.switchToLocal();
+          }
+        } catch (_) {
+          // 连接失败不阻止配置保存
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('配置已保存，可开始使用')),
+          );
+          Navigator.pop(context);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -558,26 +607,68 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 环境检测结果
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: AppTheme.info.withValues(alpha: 0.1),
+                  color: (widget.localHermesDetected ? AppTheme.success : AppTheme.warning)
+                      .withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.lightbulb_outline, size: 16, color: AppTheme.info),
+                    Icon(
+                      widget.localHermesDetected
+                          ? Icons.check_circle_outline
+                          : Icons.info_outline,
+                      size: 16,
+                      color: widget.localHermesDetected ? AppTheme.success : AppTheme.warning,
+                    ),
                     const SizedBox(width: 8),
-                    Expanded(child: Text(
-                      '配置 Hermes Desktop 的连接参数。Gateway 地址默认为本地 8642 端口。'
-                      '如果 Hermes 运行在远程服务器，请填写服务器 IP 和端口。',
-                      style: TextStyle(fontSize: 12, color: AppTheme.info),
-                    )),
+                    Expanded(
+                      child: Text(
+                        widget.localHermesDetected
+                            ? '检测到本地已安装 Hermes Agent，可直接连接。'
+                            : '未检测到本地 Hermes 环境，请选择连接方式。',
+                        style: TextStyle(fontSize: 12, color: widget.localHermesDetected ? AppTheme.success : AppTheme.warning),
+                      ),
+                    ),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
+
+              // 连接模式选择（仅未检测到本地时显示）
+              if (!widget.localHermesDetected) ...[
+                Text('连接方式', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildModeOption(
+                        value: ConnectionMode.embedded,
+                        title: '内嵌模式',
+                        subtitle: 'Windows 内嵌运行 Hermes',
+                        icon: Icons.memory,
+                        color: AppTheme.info,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildModeOption(
+                        value: ConnectionMode.remote,
+                        title: '远程连接',
+                        subtitle: '通过 SSH 连接远程服务器',
+                        icon: Icons.cloud,
+                        color: AppTheme.secondary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
+
               Text('Gateway 连接', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               TextField(controller: _gatewayUrlCtrl, decoration: const InputDecoration(
@@ -655,6 +746,45 @@ class _SetupWizardDialogState extends State<_SetupWizardDialog> {
               : const Text('保存'),
         ),
       ],
+    );
+  }
+
+  Widget _buildModeOption({
+    required ConnectionMode value,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+  }) {
+    final selected = _selectedMode == value;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => setState(() => _selectedMode = value),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? color : Theme.of(context).colorScheme.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+          color: selected ? color.withValues(alpha: 0.1) : Theme.of(context).colorScheme.surfaceContainerHighest,
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 28, color: selected ? color : Theme.of(context).colorScheme.onSurfaceVariant),
+            const SizedBox(height: 6),
+            Text(title, style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600,
+              color: selected ? color : Theme.of(context).colorScheme.onSurface,
+            )),
+            const SizedBox(height: 2),
+            Text(subtitle, style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
