@@ -161,12 +161,12 @@ class ConnectionManager {
       final res = await req.close();
       if (res.statusCode == 200) {
         stateNotifier.value =
-            state.copyWith(status: ConnStatus.connected, message: '����');
+            state.copyWith(status: ConnStatus.connected, message: '在线');
         return true;
       }
     } catch (_) {}
     stateNotifier.value =
-        state.copyWith(status: ConnStatus.disconnected, message: 'δ��Ӧ');
+        state.copyWith(status: ConnStatus.disconnected, message: '未响应');
     return false;
   }
 
@@ -175,7 +175,7 @@ class ConnectionManager {
     stateNotifier.value = state.copyWith(
       status: ConnStatus.connecting,
       mode: ConnectionMode.remote,
-      message: '���������...',
+      message: '正在连接远程...',
     );
 
     if (await _remoteBridge.connect(
@@ -185,13 +185,13 @@ class ConnectionManager {
       final ns = remoteNamespaceOf(config);
       await _applyConnectionContext(namespace: ns, serverId: config.host);
       stateNotifier.value =
-          state.copyWith(status: ConnStatus.connected, message: 'Զ������');
+          state.copyWith(status: ConnStatus.connected, message: '远程已连接');
       return true;
     }
 
     stateNotifier.value = state.copyWith(
       status: ConnStatus.error,
-      message: '����ʧ��',
+      message: '连接失败',
     );
     return false;
   }
@@ -201,7 +201,7 @@ class ConnectionManager {
     stateNotifier.value = state.copyWith(
       mode: ConnectionMode.local,
       status: ConnStatus.connecting,
-      message: '�л�����ģʽ...',
+      message: '切换到本地模式...',
     );
     await _wslBridge.connect();
     await _applyConnectionContext(namespace: 'local', serverId: 'local');
@@ -213,7 +213,7 @@ class ConnectionManager {
     stateNotifier.value = state.copyWith(
       mode: ConnectionMode.embedded,
       status: ConnStatus.connecting,
-      message: '�л���Ƕģʽ...',
+      message: '切换到内嵌模式...',
     );
     await _embeddedBridge.connect();
     await _applyConnectionContext(namespace: 'embedded', serverId: 'embedded');
@@ -383,4 +383,3 @@ class SshConfigWrapper extends SshConfig {
 
   bool get useKeyAuth => false;
 }
-

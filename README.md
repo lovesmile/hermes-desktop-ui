@@ -351,3 +351,20 @@ flutter build windows --release
 ## License
 
 MIT
+
+---
+
+## Bridge Architecture (Connection Isolation)
+
+Current runtime uses a unified Environment Bridge architecture:
+
+- Core interface: `HermesBridge`
+- Implementations: `WslBridge`, `RemoteBridge`, `EmbeddedBridge`
+- Unified entry in upper layer: `ConnectionManager.runShell(...)`
+
+Upper-layer screens/services do not branch on connection mode for shell/file operations.
+Mode-specific behavior is isolated in bridge implementations.
+
+Related usage details:
+
+- See `docs/USAGE.md` for first-launch flow, mode switching, data isolation, and troubleshooting.

@@ -99,3 +99,34 @@ Flutter Desktop App (Windows)
 | /api/logs | GET | 日志查询 |
 | /api/health | GET | 健康检查 |
 | /api/gateway/restart | POST | 重启网关 |
+
+## Environment Bridge Layer (New)
+
+To avoid business-layer branching (`if (mode == ...)`) and hardcoded path/command conflicts,
+the runtime now uses interface-oriented bridge isolation.
+
+### Layers
+
+1. Business/UI layer
+- Calls `ConnectionManager` only.
+- No mode-specific shell branching in UI.
+
+2. Environment abstraction layer
+- `HermesBridge` interface defines shell execution contract.
+- `ConnectionManager` routes by active `ConnectionMode`.
+
+3. Mode implementation layer
+- `WslBridge`: local WSL (`wsl.exe -d <distro>`)
+- `RemoteBridge`: SSH tunnel + remote command execution
+- `EmbeddedBridge`: Windows embedded runtime (`cmd /c ...`)
+
+### Switching Contract
+
+On mode switch, `ConnectionManager` applies connection context consistently:
+
+- set local DB namespace (mode/server isolation)
+- set config mode namespace
+- refresh gateway base URL
+- update active server id
+
+This keeps UI behavior unchanged while isolating runtime data and execution context.
