@@ -253,7 +253,9 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
 
   Widget _buildDocContent(String name) {
     final docs = _platformDocs();
-    final content = docs[name] ?? '暂无接入文档';
+    // Map English platform names to Chinese doc keys
+    final docKey = _docKey(name);
+    final content = docs[docKey] ?? '暂无接入文档';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: content
@@ -292,6 +294,21 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
           })
           .toList(),
     );
+  }
+
+  /// Map English platform name from getPlatformConfigs() to Chinese doc key
+  String _docKey(String name) {
+    switch (name.toLowerCase()) {
+      case 'telegram': return 'Telegram';
+      case 'discord': return 'Discord';
+      case 'slack': return 'Slack';
+      case 'whatsapp': return 'WhatsApp';
+      case 'feishu': return '飞书';
+      case 'wecom': return '企业微信';
+      case 'matrix': return 'Matrix';
+      case 'wechat': return '微信';
+      default: return name; // fallback: use as-is
+    }
   }
 
   Map<String, String> _platformDocs() {
