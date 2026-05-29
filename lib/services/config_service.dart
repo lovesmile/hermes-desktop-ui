@@ -172,7 +172,14 @@ class ConfigService {
     } catch (_) {}
 
     return platformNames.map((name) {
-      final configured = name == 'wechat' ? hasWechat : config.contains('$name:');
+      bool configured;
+      if (name == 'wechat') {
+        configured = hasWechat;
+      } else {
+        // Match "platform_name:" at start of line (not inside comments or examples)
+        final regex = RegExp('^$name:', multiLine: true);
+        configured = regex.hasMatch(config);
+      }
       var status = 'disconnected';
       if (configured) {
         final live = statusMap[name];
