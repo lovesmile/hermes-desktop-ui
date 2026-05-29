@@ -142,6 +142,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // 监听技能调用命令
     ChatScreen.skillInvocationNotifier.addListener(_onSkillInvocation);
+
+    // 监听连接切换（GatewayService.setServerId 触发时重新加载会话和数据）
+    GatewayService().refreshNotifier.addListener(_onModeChanged);
   }
 
   void _onSkillInvocation() {
@@ -153,6 +156,21 @@ class _ChatScreenState extends State<ChatScreen> {
       _insertSkill(cmd);
       _skillNode.requestFocus();
     });
+  }
+
+  /// 连接模式切换时：清空缓存、重新加载会话
+  void _onModeChanged() {
+    _messageCache.clear();
+    _draftMessages.clear();
+    _sessionDrafts.clear();
+    _streamingBuffers.clear();
+    for (final sub in _streamSubscriptions.values) {
+      sub.cancel();
+    }
+    _streamSubscriptions.clear();
+    _streamingSessions.clear();
+    _newChat();
+    _loadSessions();
   }
 
   @override
@@ -172,6 +190,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _searchController.dispose();
     _skillNode.dispose();
     ChatScreen.skillInvocationNotifier.removeListener(_onSkillInvocation);
+    GatewayService().refreshNotifier.removeListener(_onModeChanged);
     super.dispose();
   }
 

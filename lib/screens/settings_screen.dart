@@ -204,12 +204,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (_selectedMode == ConnectionMode.local) {
       await _cm.switchToLocal();
-      _gateway.refreshBaseUrl();
-      _gateway.setServerId('local');
     } else if (_selectedMode == ConnectionMode.embedded) {
       await _cm.switchToEmbedded();
-      _gateway.refreshBaseUrl();
-      _gateway.setServerId('embedded');
     } else {
       final host = _hostController.text.trim();
       final sshConfig = SshConfig(
@@ -221,8 +217,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             : null,
       );
       await _cm.switchToRemote(sshConfig);
-      _gateway.refreshBaseUrl();
-      _gateway.setServerId(host);
     }
 
     if (mounted) {

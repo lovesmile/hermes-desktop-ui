@@ -12,8 +12,6 @@ class ConfigService {
   factory ConfigService() => _instance;
   ConfigService._();
 
-  void setMode(String mode) {}
-
   static const String defaultGatewayUrl = 'http://localhost:8642';
 
   static String resolveDesktopConfigPath() {
@@ -82,38 +80,74 @@ class ConfigService {
   }
 
   Future<String> readConfig() async {
-    final home = await HermesFileService().resolveHermesHome();
+    final home = resolveHermesHome();
+    if (ConnectionManager().state.mode == ConnectionMode.embedded) {
+      try {
+        final file = File('$home/config.yaml');
+        return await file.exists() ? await file.readAsString() : 'config not found';
+      } catch (_) {
+        return 'config not found';
+      }
+    }
+    final h = await HermesFileService().resolveHermesHome();
     final res = await ConnectionManager().runShell(
-      'cat "$home/config.yaml" 2>/dev/null || echo "config not found"',
+      'cat "$h/config.yaml" 2>/dev/null || echo "config not found"',
       allowFailure: true,
     );
     return res.stdout;
   }
 
   Future<bool> writeConfig(String content) async {
-    final home = await HermesFileService().resolveHermesHome();
+    final home = resolveHermesHome();
+    if (ConnectionManager().state.mode == ConnectionMode.embedded) {
+      try {
+        await File('$home/config.yaml').writeAsString(content);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    final h = await HermesFileService().resolveHermesHome();
     final b64 = base64Encode(utf8.encode(content));
     final res = await ConnectionManager().runShell(
-      'echo "$b64" | base64 -d > "$home/config.yaml"',
+      'echo "$b64" | base64 -d > "$h/config.yaml"',
       allowFailure: true,
     );
     return res.exitCode == 0;
   }
 
   Future<String> readEnvFile() async {
-    final home = await HermesFileService().resolveHermesHome();
+    final home = resolveHermesHome();
+    if (ConnectionManager().state.mode == ConnectionMode.embedded) {
+      try {
+        final file = File('$home/.env');
+        return await file.exists() ? await file.readAsString() : '# .env not found';
+      } catch (_) {
+        return '# .env not found';
+      }
+    }
+    final h = await HermesFileService().resolveHermesHome();
     final res = await ConnectionManager().runShell(
-      'cat "$home/.env" 2>/dev/null || echo "# .env not found"',
+      'cat "$h/.env" 2>/dev/null || echo "# .env not found"',
       allowFailure: true,
     );
     return res.stdout;
   }
 
   Future<bool> writeEnvFile(String content) async {
-    final home = await HermesFileService().resolveHermesHome();
+    final home = resolveHermesHome();
+    if (ConnectionManager().state.mode == ConnectionMode.embedded) {
+      try {
+        await File('$home/.env').writeAsString(content);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    final h = await HermesFileService().resolveHermesHome();
     final b64 = base64Encode(utf8.encode(content));
     final res = await ConnectionManager().runShell(
-      'echo "$b64" | base64 -d > "$home/.env"',
+      'echo "$b64" | base64 -d > "$h/.env"',
       allowFailure: true,
     );
     return res.exitCode == 0;
@@ -138,9 +172,21 @@ class ConfigService {
       HermesFileService().getSkills();
 
   Future<String> getLogContent(String source, {int lines = 200}) async {
-    final home = await HermesFileService().resolveHermesHome();
+    final home = resolveHermesHome();
+    if (ConnectionManager().state.mode == ConnectionMode.embedded) {
+      try {
+        final file = File('$home/logs/$source.log');
+        if (!await file.exists()) return 'log not found';
+        final all = await file.readAsLines();
+        final tail = all.length > lines ? all.sublist(all.length - lines) : all;
+        return tail.join('\n');
+      } catch (_) {
+        return 'log not found';
+      }
+    }
+    final h = await HermesFileService().resolveHermesHome();
     final res = await ConnectionManager().runShell(
-      'tail -n $lines "$home/logs/$source.log" 2>/dev/null || echo "log not found"',
+      'tail -n $lines "$h/logs/$source.log" 2>/dev/null || echo "log not found"',
       allowFailure: true,
     );
     return res.stdout;

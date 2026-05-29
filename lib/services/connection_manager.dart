@@ -341,6 +341,14 @@ class ConnectionManager {
   }
 
   Future<Map<String, dynamic>> getMachineStatus() async {
+    if (state.mode == ConnectionMode.embedded) {
+      return {
+        'cpu': 0.0,
+        'memory': {'used': 0, 'total': 0},
+        'disk': {'used': '0B', 'total': '0B'},
+        'uptime': 'embedded',
+      };
+    }
     try {
       final cpu = await runShell(
         "grep 'cpu ' /proc/stat | awk '{usage=(\$2+\$4)*100/(\$2+\$4+\$5)} END {printf \"%.1f\", usage}'",
@@ -420,7 +428,6 @@ class ConnectionManager {
     required String serverId,
   }) async {
     await LocalDatabase().setMode(namespace);
-    ConfigService().setMode(namespace);
     await GatewayService().refreshBaseUrl();
     GatewayService().setServerId(serverId);
   }

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/config_service.dart';
+import '../services/gateway_service.dart';
 import 'chat_screen.dart';
 
 /// Provider → 可选模型列表
@@ -121,6 +122,13 @@ class _ModelsScreenState extends State<ModelsScreen> {
   void initState() {
     super.initState();
     _loadData();
+    GatewayService().refreshNotifier.addListener(_loadData);
+  }
+
+  @override
+  void dispose() {
+    GatewayService().refreshNotifier.removeListener(_loadData);
+    super.dispose();
   }
 
   Future<void> _loadData() async {

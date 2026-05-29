@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import '../config/theme.dart';
 import '../services/connection_manager.dart';
 import '../services/hermes_file_service.dart';
+import '../services/gateway_service.dart';
 
 /// 文件浏览器 — 根目录为用户 home（~），通过 [HermesFileService] 统一走 shell。
 /// 本地模式（WSL）支持"在资源管理器中显示"；远程模式（SSH）支持"下载"。
@@ -33,10 +34,54 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   // 连接模式：local（WSL）或 remote（SSH）
   bool _isLocal = true;
 
+  // ── helpers ──
+
+  /// 跨平台获取父目录路径（兼容 Unix/WSL 的 / 和 Windows 的 \）
+  static String _parentPath(String path) {
+    if (path.isEmpty) return path;
+    final sep = Platform.pathSeparator;
+    final idx = path.lastIndexOf(sep);
+    if (idx <= 0) return path;
+    // Windows 盘符根目录 C:\ → 不再向上
+    if (idx == 2 && path.length > 2 && path[1] == ':') return path;
+    return path.substring(0, idx);
+  }
+
+  /// 跨平台取路径最后一段
+  static String _basename(String path) =>
+      path.split(RegExp(r'[/\\]')).last;
+
+  /// 跨平台判断是否为根目录或空路径
+  static bool _canGoUp(String path) {
+    if (path.isEmpty) return false;
+    final sep = Platform.pathSeparator;
+    // 检查两种分隔符
+    if (path.contains('/') || path.contains('\\')) {
+      final parent = _parentPath(path);
+      return parent != path;
+    }
+    return false;
+  }
+
+  // ── lifecycle ──
+
   @override
   void initState() {
     super.initState();
     _isLocal = _cm.state.mode == ConnectionMode.local;
+    _resolveHome();
+    GatewayService().refreshNotifier.addListener(_onModeChanged);
+  }
+
+  @override
+  void dispose() {
+    GatewayService().refreshNotifier.removeListener(_onModeChanged);
+    super.dispose();
+  }
+
+  void _onModeChanged() {
+    _isLocal = _cm.state.mode == ConnectionMode.local;
+    _previewPath = null;
     _resolveHome();
   }
 
@@ -44,12 +89,13 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     setState(() => _loading = true);
     try {
       final home = await _fileService.resolveHermesHome();
-      final parent = home.substring(0, home.lastIndexOf('/'));
-      _currentPath = parent; // ~/.hermes 的上层即 ~
+      _currentPath = _parentPath(home);
       await _loadDir();
     } catch (e) {
       // fallback
-      _currentPath = '/home/tian';
+      _currentPath = Platform.environment['HOME'] ??
+          Platform.environment['USERPROFILE'] ??
+          '/home';
       await _loadDir();
     }
   }
@@ -62,7 +108,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
       final files = <FileItem>[];
 
       for (final name in entries) {
-        final full = '$_currentPath/$name';
+        final full = '$_currentPath${Platform.pathSeparator}$name';
         final isDir = await _fileService.dirExists(full);
         final size = isDir ? 0 : await _fileService.fileSize(full);
         final item = FileItem(name: name, path: full, isDir: isDir, size: size);
@@ -96,11 +142,10 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   }
 
   Future<void> _goUp() async {
-    final parent = _currentPath.contains('/')
-        ? _currentPath.substring(0, _currentPath.lastIndexOf('/'))
-        : _currentPath;
-    if (parent.isNotEmpty && parent != _currentPath) {
-      _currentPath = parent.isEmpty ? '/' : parent;
+    if (_currentPath.isEmpty) return;
+    final parent = _parentPath(_currentPath);
+    if (parent != _currentPath) {
+      _currentPath = parent;
       await _loadDir();
     }
   }
@@ -125,12 +170,14 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     }
   }
 
-  /// 本地模式：在 Windows 资源管理器中打开文件所在位置
+  /// 本地模式（WSL）：在 Windows 资源管理器中打开文件所在位置
   Future<void> _openInExplorer() async {
     if (_previewPath == null) return;
-    // /home/tian/.hermes/... → \\wsl.localhost\Ubuntu\home\tian\.hermes\...
-    final winPath =
-        _previewPath!.replaceAll('/', '\\').replaceFirst('\\home', '\\\\wsl.localhost\\Ubuntu\\home');
+    final distro = _cm.wslDistro;
+    // /home/tian/.hermes/... → \\wsl.localhost\<distro>\home\tian\.hermes\...
+    final winPath = _previewPath!
+        .replaceAll('/', '\\')
+        .replaceFirst(RegExp(r'^\\home'), '\\\\wsl.localhost\\$distro\\home');
     try {
       await Process.run('explorer.exe', ['/select,$winPath']);
     } catch (e) {
@@ -145,7 +192,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   /// 远程模式：下载文件到本地 Windows
   Future<void> _downloadFile() async {
     if (_previewPath == null) return;
-    final fileName = _previewPath!.split('/').last;
+    final fileName = _basename(_previewPath!);
     final result = await FilePicker.platform.saveFile(
       dialogTitle: '下载文件',
       fileName: fileName,
@@ -208,11 +255,11 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
             child: Row(
               children: [
                 GestureDetector(
-                  onTap: _currentPath.contains('/') ? _goUp : null,
+                  onTap: _canGoUp(_currentPath) ? _goUp : null,
                   child: Icon(
                     Icons.arrow_upward,
                     size: 18,
-                    color: _currentPath.contains('/')
+                    color: _canGoUp(_currentPath)
                         ? cs.primary
                         : cs.onSurfaceVariant,
                   ),
@@ -308,7 +355,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
                               const SizedBox(width: 6),
                               Expanded(
                                 child: Text(
-                                  _previewPath!.split('/').last,
+                                  _basename(_previewPath!),
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w500,
