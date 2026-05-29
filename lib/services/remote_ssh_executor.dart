@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'connection_manager.dart';
 import 'ssh_executor.dart';
 
@@ -65,23 +64,27 @@ class RemoteSshExecutor extends SshExecutor {
     final config = _currentConfig!;
 
     if (config.password != null && config.password!.isNotEmpty) {
-      const q = "'";
-      final escapedPw = config.password!.replaceAll(q, "'\\''");
-      final escapedCmd = command.replaceAll(q, "'\\''");
-      final buf = StringBuffer("sshpass -p $q$escapedPw$q ssh");
-      buf.write(' -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30');
-      if (config.port != 22) buf.write(' -p ${config.port}');
-      buf.write(' ${config.user}@${config.host} $q$escapedCmd$q');
-
       final distro = ConnectionManager().wslDistro;
-      final result = await Process.run('wsl.exe', ['-d', distro, 'bash', '-c', buf.toString()], stdoutEncoding: null, stderrEncoding: null);
-      if (result.exitCode != 0) throw Exception('SSH failed: ${utf8.decode(result.stderr as List<int>, allowMalformed: true)}');
+      // Use separate argument arrays (same pattern as connect()), avoid bash -c escaping issues
+      final sshArgs = _buildSshArgs(config);
+      final result = await Process.run('wsl.exe', [
+        '-d', distro,
+        'sshpass', '-p', config.password!, 'ssh',
+        ...sshArgs, command,
+      ], stdoutEncoding: null, stderrEncoding: null);
+      if (result.exitCode != 0) {
+        throw Exception('SSH failed: ${utf8.decode(result.stderr as List<int>, allowMalformed: true)}');
+      }
       return utf8.decode(result.stdout as List<int>, allowMalformed: true).trim();
     }
 
     final args = _buildSshArgs(config);
-    args.add("'$command'");
+    args.add(command);
     final result = await Process.run('ssh', args);
+    if (result.exitCode != 0) {
+      final err = (result.stderr as String?)?.trim() ?? '';
+      throw Exception(err.isNotEmpty ? err : 'SSH failed (exit ${result.exitCode})');
+    }
     return (result.stdout as String).trim();
   }
 
