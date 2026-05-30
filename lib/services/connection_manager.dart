@@ -74,6 +74,9 @@ class ConnectionManager {
 
   Timer? _healthTimer;
 
+  /// SSH 隧道本地端口（与远程 gateway 端口不同，避免冲突）
+  int _tunnelPort = 0;
+
   late final WslBridge _wslBridge = WslBridge(distro: _wslDistro);
   late final RemoteBridge _remoteBridge = RemoteBridge(_remoteExecutor);
   late final EmbeddedBridge _embeddedBridge =
@@ -249,9 +252,15 @@ class ConnectionManager {
       message: '正在连接远程...',
     );
 
+    _tunnelPort = await _findFreePort();
+    _remoteExecutor.setTunnelPorts(
+      tunnel: _tunnelPort,
+      remote: state.port,
+    );
+
     if (await _remoteBridge.connect(
       config: SshConfigWrapper(config),
-      localPort: state.port,
+      localPort: _tunnelPort,
     )) {
       final ns = remoteNamespaceOf(config);
       await _applyConnectionContext(namespace: ns, serverId: config.host);
@@ -273,9 +282,15 @@ class ConnectionManager {
     stateNotifier.value =
         state.copyWith(status: ConnStatus.connecting, message: '正在重连...');
 
+    if (_tunnelPort <= 0) _tunnelPort = await _findFreePort();
+    _remoteExecutor.setTunnelPorts(
+      tunnel: _tunnelPort,
+      remote: state.port,
+    );
+
     final ok = await _remoteBridge.connect(
       config: SshConfigWrapper(config),
-      localPort: state.port,
+      localPort: _tunnelPort,
     );
     if (ok) {
       stateNotifier.value =
@@ -323,6 +338,7 @@ class ConnectionManager {
       _wslBridge.disconnect(),
       _embeddedBridge.disconnect(),
     ]);
+    _tunnelPort = 0;
     stateNotifier.value = state.copyWith(status: ConnStatus.disconnected);
   }
 
@@ -343,7 +359,23 @@ class ConnectionManager {
 
   static String remoteNamespaceOf(SshConfig c) =>
       '${c.user}_${c.host}'.replaceAll('.', '_');
-  String get gatewayUrl => 'http://localhost:${state.port}';
+  String get gatewayUrl =>
+      'http://localhost:${_tunnelPort > 0 ? _tunnelPort : state.port}';
+
+  /// 找一个空闲的本地端口给 SSH 隧道使用
+  Future<int> _findFreePort() async {
+    try {
+      final server = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final port = server.port;
+      await server.close();
+      return port;
+    } catch (_) {
+      return state.port + 1000; // fallback
+    }
+  }
 
   Future<List<String>> getWslDistros() async {
     try {

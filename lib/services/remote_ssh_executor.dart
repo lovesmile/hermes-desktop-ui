@@ -7,14 +7,22 @@ import 'ssh_executor.dart';
 class RemoteSshExecutor extends SshExecutor {
   Process? _sshProcess;
   SshConfig? _currentConfig;
-  int _localPort = 8642;
+  int _tunnelPort = 0;   // 本地 SSH 隧道监听端口
+  int _remotePort = 8642; // 远程 gateway 实际端口
 
   @override
   SshConfig? get config => _currentConfig;
   @override
   bool get isConnected => _sshProcess != null;
 
-  void setLocalPort(int port) => _localPort = port;
+  /// 设置 SSH 隧道本地监听端口和远程目标端口
+  void setTunnelPorts({int? tunnel, int? remote}) {
+    if (tunnel != null) _tunnelPort = tunnel;
+    if (remote != null) _remotePort = remote;
+  }
+
+  /// 兼容旧接口
+  void setLocalPort(int port) => _tunnelPort = port;
 
   @override
   Future<bool> connect(SshConfig config) async {
@@ -23,7 +31,7 @@ class RemoteSshExecutor extends SshExecutor {
 
     try {
       final tunnelArgs = <String>[
-        '-L', '$_localPort:localhost:8642',
+        '-L', '$_tunnelPort:localhost:$_remotePort',
         '-o', 'ExitOnForwardFailure=yes',
         '-o', 'StrictHostKeyChecking=accept-new',
         '-o', 'ServerAliveInterval=30',
@@ -99,7 +107,7 @@ class RemoteSshExecutor extends SshExecutor {
   Future<bool> _checkGateway() async {
     try {
       final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-      final req = await client.getUrl(Uri.parse('http://localhost:$_localPort/health'));
+      final req = await client.getUrl(Uri.parse('http://localhost:$_tunnelPort/health'));
       final res = await req.close();
       return res.statusCode == 200;
     } catch (_) { return false; }
