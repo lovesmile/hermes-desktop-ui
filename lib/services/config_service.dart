@@ -222,8 +222,7 @@ class ConfigService {
     'dingtalk': '钉钉',
     'qqbot': 'QQ 机器人',
   };
-
-  Future<List<PlatformConfig>> getPlatformConfigs() async {
+Future<List<PlatformConfig>> getPlatformConfigs() async {
     final config = await readConfig();
     final env = await getEnvVars();
     final hasWechat = (env['WEIXIN_ACCOUNT_ID'] ?? '').isNotEmpty;

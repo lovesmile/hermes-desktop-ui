@@ -220,14 +220,6 @@ class ConnectionManager {
     return startShellProcess('python3 $scriptPath');
   }
 
-  Future<String> execRemote(String command) async {
-    final out = await _remoteBridge.exec(command);
-    if (out.exitCode != 0) {
-      throw Exception(out.stderr.isEmpty ? 'Remote command failed' : out.stderr);
-    }
-    return out.stdout;
-  }
-
   Future<bool> checkLocal() async {
     try {
       final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
