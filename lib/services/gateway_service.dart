@@ -663,9 +663,10 @@ class GatewayService {
           if (await f.exists()) content = await f.readAsString();
         } catch (_) {}
       } else {
-        // Use bridge-based reading (WSL/local/remote compatible)
+        // Use bridge-based reading with mode-aware path
+        final hermesPath = await ConnectionManager().resolveHermesHome();
         final result = await ConnectionManager().runShell(
-            'cat "$_hermesHome/logs/$logSource.log" 2>/dev/null || true',
+            'cat "$hermesPath/logs/$logSource.log" 2>/dev/null || true',
             allowFailure: true);
         if (result.stdout.isNotEmpty) content = result.stdout;
       }
@@ -706,16 +707,22 @@ class GatewayService {
   /// 清除指定源的所有日志文件内容
   Future<bool> clearLogs(String source) async {
     try {
-      final logPath = '$_hermesHome/logs/$source.log';
-      final file = File(logPath);
-      if (await file.exists()) {
-        await file.writeAsString('');
-        return true;
-      } else {
-        // 文件不存在时创建空文件
-        await file.create(recursive: true);
+      if (ConnectionManager().state.mode == ConnectionMode.embedded) {
+        final logPath = '$_hermesHome/logs/$source.log';
+        final file = File(logPath);
+        if (await file.exists()) {
+          await file.writeAsString('');
+        } else {
+          await file.create(recursive: true);
+        }
         return true;
       }
+      // Local/remote: 通过 shell 清空（路径由 resolveHermesHome 提供）
+      final hermesPath = await ConnectionManager().resolveHermesHome();
+      final result = await ConnectionManager().runShell(
+          ': > "$hermesPath/logs/$source.log" 2>/dev/null',
+          allowFailure: true);
+      return result.exitCode == 0;
     } catch (_) {
       return false;
     }
