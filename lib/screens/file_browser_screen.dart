@@ -34,13 +34,16 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   // 连接模式：local（WSL）或 remote（SSH）
   bool _isLocal = true;
 
+  // 目录缓存 { path → items }，避免回退/前进重复加载
+  final _dirCache = <String, List<FileItem>>{};
+
   // ── helpers ──
 
-  /// 跨平台获取父目录路径（兼容 Unix/WSL 的 / 和 Windows 的 \）
+  /// 跨平台获取父目录路径（优先 /，兼容 \）
   static String _parentPath(String path) {
     if (path.isEmpty) return path;
-    final sep = Platform.pathSeparator;
-    final idx = path.lastIndexOf(sep);
+    var idx = path.lastIndexOf('/');
+    if (idx <= 0) idx = path.lastIndexOf('\\');
     if (idx <= 0) return path;
     // Windows 盘符根目录 C:\ → 不再向上
     if (idx == 2 && path.length > 2 && path[1] == ':') return path;
@@ -51,17 +54,9 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   static String _basename(String path) =>
       path.split(RegExp(r'[/\\]')).last;
 
-  /// 跨平台判断是否为根目录或空路径
-  static bool _canGoUp(String path) {
-    if (path.isEmpty) return false;
-    final sep = Platform.pathSeparator;
-    // 检查两种分隔符
-    if (path.contains('/') || path.contains('\\')) {
-      final parent = _parentPath(path);
-      return parent != path;
-    }
-    return false;
-  }
+  /// 跨平台判断是否为根目录（不可再向上）
+  static bool _canGoUp(String path) =>
+      path.isNotEmpty && _parentPath(path) != path;
 
   // ── lifecycle ──
 
@@ -80,12 +75,14 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   }
 
   void _onModeChanged() {
+    _dirCache.clear();
     _isLocal = _cm.state.mode == ConnectionMode.local;
     _previewPath = null;
     _resolveHome();
   }
 
   Future<void> _resolveHome() async {
+    _dirCache.clear();
     setState(() => _loading = true);
     try {
       final home = await _fileService.resolveHermesHome();
@@ -100,7 +97,16 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     }
   }
 
-  Future<void> _loadDir() async {
+  Future<void> _loadDir({bool forceRefresh = false}) async {
+    if (forceRefresh) _dirCache.remove(_currentPath);
+
+    // 命中缓存 → 直接显示，不转圈
+    final cached = _dirCache[_currentPath];
+    if (cached != null) {
+      setState(() { _items = cached; _error = ''; _loading = false; });
+      return;
+    }
+
     setState(() => _loading = true);
     try {
       final entries = await _fileService.listFiles(_currentPath);
@@ -108,7 +114,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
       final files = <FileItem>[];
 
       for (final name in entries) {
-        final full = '$_currentPath${Platform.pathSeparator}$name';
+        final full = '$_currentPath/$name';
         final isDir = await _fileService.dirExists(full);
         final size = isDir ? 0 : await _fileService.fileSize(full);
         final item = FileItem(name: name, path: full, isDir: isDir, size: size);
@@ -122,8 +128,11 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
       dirs.sort((a, b) => a.name.compareTo(b.name));
       files.sort((a, b) => a.name.compareTo(b.name));
 
+      final items = [...dirs, ...files];
+      _dirCache[_currentPath] = items; // 写入缓存
+
       setState(() {
-        _items = [...dirs, ...files];
+        _items = items;
         _loading = false;
         _error = '';
       });
@@ -170,14 +179,41 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     }
   }
 
+  /// 上传文件到当前目录
+  Future<void> _uploadFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: '选择要上传的文件',
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    if (file.path == null) return;
+    final bytes = await File(file.path!).readAsBytes();
+    final dest = '$_currentPath/${file.name}';
+    try {
+      final ok = await _fileService.writeBytes(dest, bytes);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ok ? '已上传到 $dest' : '上传失败')),
+        );
+        if (ok) _loadDir();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('上传失败: $e')),
+        );
+      }
+    }
+  }
+
   /// 本地模式（WSL）：在 Windows 资源管理器中打开文件所在位置
   Future<void> _openInExplorer() async {
     if (_previewPath == null) return;
     final distro = _cm.wslDistro;
-    // /home/tian/.hermes/... → \\wsl.localhost\<distro>\home\tian\.hermes\...
+    // /home/<user>/.hermes/... → \\wsl.localhost\<distro>\home\<user>\.hermes\...
     final winPath = _previewPath!
         .replaceAll('/', '\\')
-        .replaceFirst(RegExp(r'^\\home'), '\\\\wsl.localhost\\$distro\\home');
+        .replaceFirst(r'\home', '\\\\wsl.localhost\\$distro\\home');
     try {
       await Process.run('explorer.exe', ['/select,$winPath']);
     } catch (e) {
@@ -231,8 +267,13 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
         title: const Text('文件浏览'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.upload_file_outlined),
+            onPressed: _uploadFile,
+            tooltip: '上传文件',
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadDir,
+            onPressed: () => _loadDir(forceRefresh: true),
             tooltip: '刷新',
           ),
           IconButton(
@@ -303,7 +344,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
                                       style: TextStyle(color: cs.error)),
                                   const SizedBox(height: 16),
                                   FilledButton.icon(
-                                    onPressed: _loadDir,
+                                    onPressed: () => _loadDir(forceRefresh: true),
                                     icon: const Icon(Icons.refresh, size: 18),
                                     label: const Text('重试'),
                                   ),
@@ -365,21 +406,21 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
                                 ),
                               ),
                               const SizedBox(width: 4),
-                              // 本地 → 资源管理器；远程 → 下载
+                              // 下载（所有模式）
+                              IconButton(
+                                icon: Icon(Icons.download_outlined,
+                                    size: 16, color: cs.primary),
+                                onPressed: _downloadFile,
+                                tooltip: '下载',
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              // 本地模式额外支持"在资源管理器中显示"
                               if (_isLocal)
                                 IconButton(
                                   icon: Icon(Icons.folder_open_outlined,
                                       size: 16, color: cs.primary),
                                   onPressed: _openInExplorer,
                                   tooltip: '在资源管理器中显示',
-                                  visualDensity: VisualDensity.compact,
-                                )
-                              else
-                                IconButton(
-                                  icon: Icon(Icons.download_outlined,
-                                      size: 16, color: cs.primary),
-                                  onPressed: _downloadFile,
-                                  tooltip: '下载',
                                   visualDensity: VisualDensity.compact,
                                 ),
                               const SizedBox(width: 4),
