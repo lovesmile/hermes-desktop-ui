@@ -212,6 +212,11 @@ class ConnectionManager {
     }
   }
 
+  /// 启动微信扫码登录进程（python3 脚本）
+  Future<Process> startWechatProcess(String scriptPath) {
+    return startShellProcess('python3 $scriptPath');
+  }
+
   Future<String> execRemote(String command) async {
     final out = await _remoteBridge.exec(command);
     if (out.exitCode != 0) {

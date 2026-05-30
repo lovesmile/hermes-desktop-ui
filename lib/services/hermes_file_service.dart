@@ -247,4 +247,31 @@ class HermesFileService {
         await _cm.runShell('stat -c%s "$path" 2>/dev/null || echo 0');
     return int.tryParse(r.stdout) ?? 0;
   }
+
+  // ── script discovery ──
+
+  /// 在标准位置搜索脚本（$HERMES_HOME/scripts/ 或 scripts/）
+  Future<String> findScript(String scriptName) async {
+    if (_isEmbedded) {
+      final home = _embeddedHermesHome();
+      final candidates = [
+        '$home/scripts/$scriptName',
+        'scripts/$scriptName',
+      ];
+      for (final p in candidates) {
+        if (await File(p).exists()) return p;
+      }
+      throw Exception('找不到 $scriptName 脚本');
+    }
+    final hermesHome = await resolveHermesHome();
+    final r = await _cm.runShell(
+      'ls "${hermesHome}/scripts/${scriptName}" 2>/dev/null || '
+      'ls "scripts/${scriptName}" 2>/dev/null || echo ""',
+      allowFailure: true,
+    );
+    final path = r.stdout.trim();
+    if (path.isEmpty) throw Exception('找不到 $scriptName 脚本');
+    if (!path.startsWith('/')) return '${hermesHome}/scripts/${scriptName}';
+    return path;
+  }
 }
