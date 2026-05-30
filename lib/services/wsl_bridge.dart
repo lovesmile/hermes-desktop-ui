@@ -31,16 +31,24 @@ class WslBridge implements HermesBridge {
 
   @override
   Future<BridgeExecResult> exec(String command) async {
-    final result = await Process.run(
+    final process = await Process.start(
       'wsl.exe',
-      ['-d', _distro, 'bash', '-c', command],
-      stdoutEncoding: null,
-      stderrEncoding: null,
+      ['-d', _distro, 'bash', '-s'],
     );
+    // Pipe command via stdin — bash -c has a WSL+Dart variable assignment bug
+    process.stdin.write(command);
+    await process.stdin.close();
+    final outBytes = <int>[];
+    final errBytes = <int>[];
+    await Future.wait([
+      process.stdout.forEach((chunk) => outBytes.addAll(chunk)),
+      process.stderr.forEach((chunk) => errBytes.addAll(chunk)),
+    ]);
+    final exitCode = await process.exitCode;
     return BridgeExecResult(
-      stdout: utf8.decode(result.stdout as List<int>, allowMalformed: true).trim(),
-      stderr: utf8.decode(result.stderr as List<int>, allowMalformed: true).trim(),
-      exitCode: result.exitCode,
+      stdout: utf8.decode(outBytes, allowMalformed: true).trim(),
+      stderr: utf8.decode(errBytes, allowMalformed: true).trim(),
+      exitCode: exitCode,
     );
   }
 }
