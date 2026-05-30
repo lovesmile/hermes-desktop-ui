@@ -218,10 +218,12 @@ class _ModelsScreenState extends State<ModelsScreen> {
     if (confirmed == true) {
       final ok = await HermesFileService().deleteDir(path);
       if (mounted) {
+        if (ok) {
+          setState(() => _skills.removeWhere((s) => s['path'] == path));
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(ok ? '已删除「$name」' : '删除失败')),
         );
-        _loadData();
       }
     }
   }
