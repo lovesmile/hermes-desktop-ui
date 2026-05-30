@@ -715,6 +715,7 @@ class GatewayService {
         } else {
           await file.create(recursive: true);
         }
+        refreshNotifier.value++;
         return true;
       }
       // Local/remote: 通过 shell 清空（路径由 resolveHermesHome 提供）
@@ -722,7 +723,9 @@ class GatewayService {
       final result = await ConnectionManager().runShell(
           ': > "$hermesPath/logs/$source.log" 2>/dev/null',
           allowFailure: true);
-      return result.exitCode == 0;
+      final ok = result.exitCode == 0;
+      if (ok) refreshNotifier.value++;
+      return ok;
     } catch (_) {
       return false;
     }
