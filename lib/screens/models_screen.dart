@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/config_service.dart';
 import '../services/gateway_service.dart';
+import '../services/hermes_file_service.dart';
 import 'chat_screen.dart';
 
 /// Provider → 可选模型列表
@@ -190,6 +191,38 @@ class _ModelsScreenState extends State<ModelsScreen> {
       });
     } catch (e) {
       setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _confirmDeleteSkill(String path, String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除技能'),
+        content: Text('确定要删除技能「$name」吗？\n\n此操作会从磁盘上删除该技能目录，不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      final ok = await HermesFileService().deleteDir(path);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ok ? '已删除「$name」' : '删除失败')),
+        );
+        _loadData();
+      }
     }
   }
 
@@ -392,6 +425,15 @@ class _ModelsScreenState extends State<ModelsScreen> {
                                         ),
                                       ),
                                     ),
+                                  const SizedBox(width: 4),
+                                  IconButton(
+                                    icon: Icon(Icons.delete_outline,
+                                        size: 16,
+                                        color: AppTheme.error.withValues(alpha: 0.7)),
+                                    visualDensity: VisualDensity.compact,
+                                    tooltip: '删除技能',
+                                    onPressed: () => _confirmDeleteSkill(skill['path'] ?? '', skill['name'] ?? ''),
+                                  ),
                                 ],
                               ),
                             ),
