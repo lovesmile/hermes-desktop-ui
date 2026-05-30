@@ -267,6 +267,28 @@ class ConnectionManager {
     return false;
   }
 
+  /// 轻量重连 — 只重建 SSH 隧道，不触发 context/refresh 切换
+  Future<bool> _reconnectRemote(SshConfig config) async {
+    _remoteBridge.disconnect();
+    stateNotifier.value =
+        state.copyWith(status: ConnStatus.connecting, message: '正在重连...');
+
+    final ok = await _remoteBridge.connect(
+      config: SshConfigWrapper(config),
+      localPort: state.port,
+    );
+    if (ok) {
+      stateNotifier.value =
+          state.copyWith(status: ConnStatus.connected, message: '远程已连接');
+      return true;
+    }
+    stateNotifier.value = state.copyWith(
+      status: ConnStatus.error,
+      message: '连接失败',
+    );
+    return false;
+  }
+
   Future<void> switchToLocal() async {
     await disconnect();
     stateNotifier.value = state.copyWith(
@@ -312,7 +334,7 @@ class ConnectionManager {
         if (!ok && state.mode == ConnectionMode.remote) {
           final c = _remoteExecutor.config;
           if (c != null) {
-            await connectRemote(c);
+            await _reconnectRemote(c);
           }
         }
       }
