@@ -530,24 +530,10 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
     });
 
     try {
-      // 查找脚本：优先 ~/.hermes/scripts/，其次项目默认位置
-      final findScript = await ConnectionManager().runShell(
-        'ls "\$HOME/.hermes/scripts/wechat_qr_login_full.py" 2>/dev/null || '
-        'ls scripts/wechat_qr_login_full.py 2>/dev/null || echo ""',
-        allowFailure: true,
-      );
-      var scriptPath = findScript.stdout.trim();
-      if (scriptPath.isEmpty) {
-        // 最后的 fallback：让用户配置
-        throw Exception('找不到 wechat_qr_login_full.py 脚本，'
-            '请将其复制到 ~/.hermes/scripts/ 目录');
-      }
-      // 确保是绝对路径（通过 ~ 扩展）
-      if (!scriptPath.startsWith('/')) {
-        scriptPath = r'$HOME/.hermes/scripts/wechat_qr_login_full.py';
-      }
+      final scriptPath =
+          await HermesFileService().findScript('wechat_qr_login_full.py');
       _wechatProcess =
-          await ConnectionManager().startShellProcess('python3 $scriptPath');
+          await ConnectionManager().startWechatProcess(scriptPath);
 
       _wechatSubscription = _wechatProcess!.stdout
           .transform(utf8.decoder)
@@ -732,12 +718,9 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
         _wechatStatusText = '✓ 配置已保存，正在重启 Gateway...';
       });
 
-      // Restart gateway
+      // Restart gateway via HTTP
       try {
-        await ConnectionManager().runShell(
-          'hermes --accept-hooks gateway restart',
-          allowFailure: true,
-        );
+        await GatewayService().restartGateway();
       } catch (_) {
         // Gateway restart might fail if not running, that's OK
       }
