@@ -108,11 +108,28 @@ class ConnectionManager {
         : const SshConfig();
 
     stateNotifier.value =
-        ConnectionInfo(status: ConnStatus.disconnected, mode: mode, port: port);
+        ConnectionInfo(status: ConnStatus.connecting, mode: mode, port: port);
+
+    // 确保首次启动检查所需的字段存在
+    if (!config.containsKey('gateway_url')) {
+      config['gateway_url'] = ConnectionManager().gatewayUrl;
+    }
+    if (!config.containsKey('api_key')) {
+      config['api_key'] = 'hermes-desktop-dev-key';
+    }
+    await ConfigService().writeDesktopConfig(config);
 
     _startHealthCheck();
-    if (mode == ConnectionMode.remote && ssh.isValid) {
-      await connectRemote(ssh);
+    if (mode == ConnectionMode.remote) {
+      if (ssh.isValid) {
+        await connectRemote(ssh);
+      } else {
+        stateNotifier.value = ConnectionInfo(
+          status: ConnStatus.disconnected,
+          mode: ConnectionMode.remote,
+          message: 'SSH 未配置，请在设置中完成',
+        );
+      }
     } else if (mode == ConnectionMode.embedded) {
       await switchToEmbedded();
     } else {

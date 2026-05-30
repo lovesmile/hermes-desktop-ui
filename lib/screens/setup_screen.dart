@@ -3,7 +3,9 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/config_service.dart';
 import '../services/connection_manager.dart';
+import 'models_screen.dart' as ms;
 
 /// A full-screen Material 3 setup wizard that guides the user through
 /// connecting to a remote Hermes server or installing Hermes locally.
@@ -20,16 +22,15 @@ class SetupScreen extends StatefulWidget {
 }
 
 /// Internal step tracking for the wizard.
-enum _WizardStep { welcome, remote, local, installing }
+enum _WizardStep { welcome, remote, local, configure, installing }
 
 class _SetupScreenState extends State<SetupScreen> {
   _WizardStep _step = _WizardStep.welcome;
   bool _working = false;
   String _statusText = '';
-  double _progress = 0;
   String? _error;
 
-  // 鈹€鈹€ Remote SSH form state 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // --- Remote SSH form state
   final _hostCtrl = TextEditingController();
   final _portCtrl = TextEditingController(text: '22');
   final _userCtrl = TextEditingController();
@@ -37,9 +38,13 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _tested = false;
   bool _testSuccess = false;
 
-  // 鈹€鈹€ Local install state 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-  bool _pipAvailable = false;
-  bool _pipChecked = false;
+  // --- Local install state
+
+  // --- LLM Config state
+  final _apiKeyCtrl = TextEditingController(text: 'hermes-desktop-dev-key');
+  String _selectedProvider = 'deepseek';
+  String _selectedModel = 'deepseek-v4-flash';
+  final _providerApiKeyCtrl = TextEditingController(text: '');
 
   @override
   void dispose() {
@@ -47,12 +52,12 @@ class _SetupScreenState extends State<SetupScreen> {
     _portCtrl.dispose();
     _userCtrl.dispose();
     _passwordCtrl.dispose();
+    _apiKeyCtrl.dispose();
+    _providerApiKeyCtrl.dispose();
     super.dispose();
   }
 
-  // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
-  //  Remote helpers
-  // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+  // ======== Remote helpers ========
 
   Future<void> _testRemoteConnection() async {
     setState(() {
@@ -73,7 +78,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
     if (!config.isValid) {
       setState(() {
-        _error = '璇峰～鍐欎富鏈哄湴鍧€鍜岀敤鎴峰悕';
+        _error = '请填写主机地址和用户名';
         _working = false;
         _tested = true;
         _testSuccess = false;
@@ -89,7 +94,7 @@ class _SetupScreenState extends State<SetupScreen> {
           _testSuccess = true;
           _tested = true;
           _working = false;
-          _statusText = '杩炴帴鎴愬姛!';
+          _statusText = '连接成功!';
         });
       } else {
         setState(() {
@@ -105,7 +110,7 @@ class _SetupScreenState extends State<SetupScreen> {
         _testSuccess = false;
         _tested = true;
         _working = false;
-        _error = '杩炴帴澶辫触: $e';
+        _error = '连接失败: $e';
       });
     }
   }
@@ -138,13 +143,15 @@ class _SetupScreenState extends State<SetupScreen> {
       final ok = await ConnectionManager().connectRemote(config);
       if (!mounted) return;
       if (ok) {
+        await ConfigService().writeDesktopConfig({
+          ...await ConfigService().readDesktopConfig(),
+          'connection_mode': 'remote',
+          'ssh_config': config.toJson(),
+        });
         setState(() {
-          _step = _WizardStep.installing;
-          _statusText = '远程连接成功!';
+          _step = _WizardStep.configure;
           _working = false;
         });
-        await Future.delayed(const Duration(milliseconds: 800));
-        if (mounted) widget.onComplete();
       } else {
         setState(() {
           _working = false;
@@ -165,29 +172,71 @@ class _SetupScreenState extends State<SetupScreen> {
     setState(() {
       _working = true;
       _error = null;
-      _statusText = '正在切换到内嵌模式...';
+      _statusText = '正在检查内嵌 Hermes...';
     });
 
+    final exePath = '${ConnectionManager().hermesBundlePath}\\hermes.exe';
+    final exeExists = await File(exePath).exists();
+    if (!mounted) return;
+
+    if (!exeExists) {
+      // 未安装 → 自动下载+安装
+      setState(() => _statusText = '正在下载内嵌 Hermes...');
+      try {
+        final zipPath = await ConnectionManager().downloadHermesBundle(
+          ConnectionManager.defaultHermesDownloadUrl,
+          onProgress: (received, total) {
+            if (!mounted) return;
+            final pct = total > 0 ? (received * 100 ~/ total) : 0;
+            setState(() => _statusText = '正在下载内嵌 Hermes... $pct%');
+          },
+        );
+        if (!mounted) return;
+
+        setState(() => _statusText = '正在安装...');
+        await ConnectionManager().extractBundle(zipPath);
+        if (!mounted) return;
+
+        // 验证安装结果
+        if (!await File(exePath).exists()) {
+          setState(() {
+            _working = false;
+            _error = '安装失败：解压后未找到 hermes.exe';
+          });
+          return;
+        }
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _working = false;
+          _error = '下载或安装失败: $e';
+        });
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _statusText = '正在切换到内嵌模式...');
     try {
       await ConnectionManager().switchToEmbedded();
       if (!mounted) return;
 
-      final state = ConnectionManager().state;
-      if (state.status == ConnStatus.connected) {
+      if (ConnectionManager().state.status == ConnStatus.connected) {
+        await ConfigService().writeDesktopConfig({
+          ...await ConfigService().readDesktopConfig(),
+          'connection_mode': 'embedded',
+        });
         setState(() {
-          _step = _WizardStep.installing;
-          _statusText = '内嵌模式已就绪';
+          _step = _WizardStep.configure;
           _working = false;
         });
-        await Future.delayed(const Duration(milliseconds: 600));
-        if (mounted) widget.onComplete();
         return;
       }
 
       setState(() {
         _working = false;
-        _error = state.message.isNotEmpty
-            ? state.message
+        _error = ConnectionManager().state.message.isNotEmpty
+            ? ConnectionManager().state.message
             : '内嵌模式启动失败';
       });
     } catch (e) {
@@ -199,171 +248,53 @@ class _SetupScreenState extends State<SetupScreen> {
     }
   }
 
-  // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
-  //  Local install helpers
-  // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+  // ======== Local install helpers ========
 
   Future<void> _startLocalInstall() async {
     setState(() {
       _step = _WizardStep.local;
       _working = true;
       _error = null;
-      _statusText = '鑷姩妫€娴?Hermes...';
+      _statusText = '正在检测 WSL Hermes 环境...';
     });
 
-    // 1. Check if hermes is already available
-    final hermesAvailable = await _checkCommand('hermes');
-    if (hermesAvailable) {
-      if (!mounted) return;
-      setState(() => _statusText = 'Hermes 宸插畨瑁咃紝姝ｅ湪鍚姩...');
-      final started = await ConnectionManager().startLocalGateway();
-      if (!mounted) return;
-      if (started) {
-        setState(() {
-          _step = _WizardStep.installing;
-          _statusText = 'Hermes 宸插氨缁?';
-          _working = false;
-        });
-        await Future.delayed(const Duration(milliseconds: 600));
-        if (mounted) widget.onComplete();
-        return;
-      }
-    }
-
-    // 2. Check if pip is available
-    final pipOk = await _checkCommand('pip');
+    // Check if hermes is available inside WSL
+    final hasHermes = await _checkHermesInWsl();
     if (!mounted) return;
-    if (pipOk) {
-      _pipAvailable = true;
-    }
-    _pipChecked = true;
 
-    if (pipOk) {
-      // Try pip install
-      setState(() {
-        _statusText = '姝ｅ湪瀹夎 Hermes Agent (pip install)...';
-        _progress = 0;
-      });
+    if (hasHermes) {
+      setState(() => _statusText = '检测到 Hermes，正在连接...');
+      await ConnectionManager().switchToLocal();
+      if (!mounted) return;
 
-      try {
-        final result = await Process.run('pip', ['install', 'hermes-agent']);
-        if (!mounted) return;
-        if (result.exitCode == 0) {
-          setState(() {
-            _statusText = '瀹夎瀹屾垚锛屾鍦ㄥ惎鍔?..';
-            _progress = 0.8;
-          });
-          final started = await ConnectionManager().startLocalGateway();
-          if (!mounted) return;
-          if (started) {
-            setState(() {
-              _step = _WizardStep.installing;
-              _statusText = 'Hermes 宸插氨缁?';
-              _progress = 1.0;
-              _working = false;
-            });
-            await Future.delayed(const Duration(milliseconds: 600));
-            if (mounted) widget.onComplete();
-            return;
-          } else {
-            setState(() {
-              _error = 'pip 瀹夎鎴愬姛浣嗘棤娉曞惎鍔?Hermes Gateway锛岃鎵嬪姩鍚姩';
-              _working = false;
-            });
-            return;
-          }
-        } else {
-          setState(() {
-            _error = 'pip install 澶辫触:\n${result.stderr}';
-            _working = false;
-          });
-          return;
-        }
-      } catch (e) {
-        if (!mounted) return;
+      if (ConnectionManager().state.status == ConnStatus.connected) {
+        await ConfigService().writeDesktopConfig({
+          ...await ConfigService().readDesktopConfig(),
+          'connection_mode': 'local',
+        });
         setState(() {
-          _error = 'pip install 鍑洪敊: $e';
+          _step = _WizardStep.configure;
           _working = false;
         });
         return;
       }
     }
 
-    // 3. pip not available 鈥?try bundle download
+    // Hermes not available in WSL
     setState(() {
-      _statusText = '姝ｅ湪涓嬭浇 Hermes Bundle...';
-      _progress = 0;
+      _working = false;
+      _error = '未在 WSL 中检测到 Hermes，请先在 WSL 中自行安装 Hermes Agent，然后点击重试。';
     });
-
-    try {
-      final bundlePath = await ConnectionManager().downloadHermesBundle(
-        ConnectionManager.defaultHermesDownloadUrl,
-        onProgress: (received, total) {
-          if (!mounted) return;
-          setState(() {
-            _progress = total > 0 ? received / total : 0;
-            final receivedMB = received / 1024 / 1024;
-            final totalMB = total / 1024 / 1024;
-            if (total > 0) {
-              _statusText =
-                  '姝ｅ湪涓嬭浇... ${receivedMB.toStringAsFixed(1)} MB / ${totalMB.toStringAsFixed(1)} MB';
-            } else {
-              _statusText = '姝ｅ湪涓嬭浇... ${receivedMB.toStringAsFixed(1)} MB';
-            }
-          });
-        },
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        _statusText = '姝ｅ湪瑙ｅ帇瀹夎...';
-        _progress = 0.9;
-      });
-
-      await ConnectionManager().extractBundle(bundlePath);
-
-      if (!mounted) return;
-
-      setState(() {
-        _statusText = '姝ｅ湪鍚姩 Hermes Gateway...';
-      });
-
-      final started = await ConnectionManager().startLocalGateway();
-
-      if (!mounted) return;
-
-      if (started) {
-        setState(() {
-          _step = _WizardStep.installing;
-          _statusText = 'Hermes 宸插氨缁?';
-          _progress = 1.0;
-          _working = false;
-        });
-        await Future.delayed(const Duration(milliseconds: 600));
-        if (mounted) widget.onComplete();
-      } else {
-        setState(() {
-          _error = '瑙ｅ帇鎴愬姛浣嗘棤娉曞惎鍔?Gateway锛岃鎵嬪姩鍚姩';
-          _working = false;
-        });
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = '瀹夎澶辫触: $e';
-        _working = false;
-      });
-    }
   }
 
-  Future<bool> _checkCommand(String cmd) async {
+  Future<bool> _checkHermesInWsl() async {
     try {
-      final result = await Process.run(
-        Platform.isWindows ? 'where' : 'which',
-        [cmd],
-      );
-      return result.exitCode == 0;
+      final distro = ConnectionManager().wslDistro;
+      final r = await Process.run('wsl.exe', [
+        '-d', distro, 'bash', '-c',
+        'command -v hermes 2>/dev/null && echo "EXISTS" || echo ""',
+      ]);
+      return (r.stdout as String).trim().contains('EXISTS');
     } catch (_) {
       return false;
     }
@@ -376,9 +307,237 @@ class _SetupScreenState extends State<SetupScreen> {
     }
   }
 
-  // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
-  //  Build
-  // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+  // ======== LLM Config ========
+
+  Future<void> _saveConfig() async {
+    setState(() {
+      _working = true;
+      _statusText = '正在保存配置...';
+    });
+
+    try {
+      await ConfigService().writeDesktopConfig({
+        ...await ConfigService().readDesktopConfig(),
+        'api_key': _apiKeyCtrl.text.trim(),
+      });
+
+      final hermesHome = ConfigService.resolveHermesHome();
+      final configFile = File('$hermesHome/config.yaml');
+      if (await configFile.exists()) {
+        var content = await configFile.readAsString();
+        content = content.replaceAll(
+          RegExp(r'^(\s+)default:.*$', multiLine: true),
+          '  default: $_selectedModel');
+        content = content.replaceAll(
+          RegExp(r'^(\s+)provider:.*$', multiLine: true),
+          '  provider: $_selectedProvider');
+        await configFile.writeAsString(content);
+      }
+
+      if (_providerApiKeyCtrl.text.trim().isNotEmpty) {
+        final envFile = File('$hermesHome/.env');
+        if (await envFile.exists()) {
+          var envContent = await envFile.readAsString();
+          final providerUpper = _selectedProvider.toUpperCase();
+          final keyVar = '${providerUpper}_API_KEY';
+          if (envContent.contains('$keyVar=')) {
+            envContent = envContent.replaceAll(
+              RegExp('^$keyVar=.*' r'$', multiLine: true),
+              '$keyVar=${_providerApiKeyCtrl.text.trim()}',
+            );
+          } else {
+            envContent += '\n$keyVar=${_providerApiKeyCtrl.text.trim()}\n';
+          }
+          final baseUrl = ms.providerBaseUrls[_selectedProvider] ?? '';
+          if (baseUrl.isNotEmpty) {
+            final urlVar = '${providerUpper}_BASE_URL';
+            if (envContent.contains('$urlVar=')) {
+              envContent = envContent.replaceAll(
+                RegExp('^$urlVar=.*' r'$', multiLine: true),
+                '$urlVar=$baseUrl');
+            } else {
+              envContent += '\n$urlVar=$baseUrl\n';
+            }
+          }
+          await envFile.writeAsString(envContent);
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _step = _WizardStep.installing;
+        _statusText = '配置已保存';
+        _working = false;
+      });
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (mounted) widget.onComplete();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _working = false;
+        _error = '保存配置失败: $e';
+      });
+    }
+  }
+
+  void _skipConfig() {
+    setState(() {
+      _step = _WizardStep.installing;
+      _statusText = '跳过配置';
+      _working = false;
+    });
+    Future.delayed(const Duration(milliseconds: 600), () {
+      if (mounted) widget.onComplete();
+    });
+  }
+
+  Widget _buildConfigure(ColorScheme cs) {
+    final models = ms.providerModels[_selectedProvider] ?? [];
+    return Column(
+      key: const ValueKey('configure'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => setState(() {
+                _step = _WizardStep.welcome;
+                _error = null;
+              }),
+              style: IconButton.styleFrom(
+                foregroundColor: cs.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'LLM 配置',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface,
+                  ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '配置模型提供商和 API Key，也可稍后在设置中完成',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: cs.onSurfaceVariant,
+              ),
+        ),
+        const SizedBox(height: 24),
+
+        // API Key for Gateway
+        TextField(
+          controller: _apiKeyCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Gateway API Key',
+            hintText: '与 .env 中 API_SERVER_KEY 一致',
+            prefixIcon: Icon(Icons.key, size: 18),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Provider
+        Text('模型提供商', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          value: _selectedProvider,
+          decoration: const InputDecoration(
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          items: ms.allProviders.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
+          onChanged: (v) {
+            if (v == null) return;
+            setState(() {
+              _selectedProvider = v;
+              final newModels = ms.providerModels[v] ?? [];
+              if (newModels.isNotEmpty) _selectedModel = newModels.first;
+            });
+          },
+        ),
+        const SizedBox(height: 12),
+
+        // Model
+        if (models.isNotEmpty) ...[
+          Text('模型', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            value: models.contains(_selectedModel) ? _selectedModel : models.first,
+            decoration: const InputDecoration(
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+            items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+            onChanged: (v) {
+              if (v != null) setState(() => _selectedModel = v);
+            },
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        // Provider API Key
+        TextField(
+          controller: _providerApiKeyCtrl,
+          obscureText: true,
+          decoration: const InputDecoration(
+            labelText: 'Provider API Key',
+            hintText: 'LLM 服务商的 API Key',
+            prefixIcon: Icon(Icons.vpn_key_outlined, size: 18),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 24),
+
+        // Actions
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _working ? null : _skipConfig,
+                child: const Text('跳过'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _working ? null : _saveConfig,
+                icon: _working
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.save_outlined, size: 18),
+                label: const Text('保存并完成'),
+              ),
+            ),
+          ],
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: cs.errorContainer.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              _error!,
+              style: TextStyle(fontSize: 12, color: cs.error),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ======== Build ========
 
   @override
   Widget build(BuildContext context) {
@@ -410,12 +569,14 @@ class _SetupScreenState extends State<SetupScreen> {
         return _buildRemoteForm(cs);
       case _WizardStep.local:
         return _buildLocalInstall(cs);
+      case _WizardStep.configure:
+        return _buildConfigure(cs);
       case _WizardStep.installing:
         return _buildInstalling(cs);
     }
   }
 
-  // 鈹€鈹€ Welcome 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // --- Welcome
 
   Widget _buildWelcome(ColorScheme cs) {
     return Column(
@@ -465,7 +626,11 @@ class _SetupScreenState extends State<SetupScreen> {
           icon: Icons.dns_outlined,
           title: '连接远程服务器',
           subtitle: '通过 SSH 连接已运行 Hermes 的远程主机',
-          onTap: () => setState(() => _step = _WizardStep.remote),
+          onTap: () => setState(() {
+            _step = _WizardStep.remote;
+            _error = null;
+            _tested = false;
+          }),
         ),
         const SizedBox(height: 16),
 
@@ -473,7 +638,7 @@ class _SetupScreenState extends State<SetupScreen> {
         _WizardCard(
           icon: Icons.memory_outlined,
           title: '内嵌模式',
-          subtitle: '直接在 Windows 环境运行 Hermes',
+          subtitle: '使用 Hermes Desktop 内置的 Hermes 环境，无需额外安装',
           onTap: () => _startEmbeddedMode(),
         ),
         const SizedBox(height: 16),
@@ -481,11 +646,61 @@ class _SetupScreenState extends State<SetupScreen> {
         // 选项 3：本地安装
         _WizardCard(
           icon: Icons.download_outlined,
-          title: '本地安装',
-          subtitle: '在本机安装并运行 Hermes Gateway',
+          title: 'WSL 本地模式',
+          subtitle: '连接用户 WSL 环境中自行安装的 Hermes',
           onTap: () => _startLocalInstall(),
         ),
         const SizedBox(height: 32),
+
+        // Status/progress during embedded install
+        if (_working) ...[
+          _buildStatusItem(cs, Icons.download, _statusText, true),
+          const SizedBox(height: 12),
+          const LinearProgressIndicator(minHeight: 4),
+          const SizedBox(height: 12),
+        ],
+
+        // Error during embedded install
+        if (_error != null && !_working)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: cs.errorContainer.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: cs.error.withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.error_outline, size: 18, color: cs.error),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _error!,
+                        style: TextStyle(fontSize: 12, color: cs.error),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _startEmbeddedMode(),
+                        icon: const Icon(Icons.refresh, size: 16),
+                        label: const Text('重试'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
 
         TextButton(
           onPressed: widget.onComplete,
@@ -495,7 +710,7 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
-  // Remote SSH Form 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // Remote SSH Form ---
 
   Widget _buildRemoteForm(ColorScheme cs) {
     return Column(
@@ -508,7 +723,11 @@ class _SetupScreenState extends State<SetupScreen> {
           children: [
             IconButton(
               icon: const Icon(Icons.arrow_back),
-              onPressed: () => setState(() => _step = _WizardStep.welcome),
+              onPressed: () => setState(() {
+                _step = _WizardStep.welcome;
+                _error = null;
+                _tested = false;
+              }),
               style: IconButton.styleFrom(
                 foregroundColor: cs.onSurfaceVariant,
               ),
@@ -525,31 +744,31 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          '濉啓杩滅▼鏈嶅姟鍣ㄧ殑 SSH 杩炴帴淇℃伅',
+          '填写远程服务器的 SSH 连接信息',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: cs.onSurfaceVariant,
               ),
         ),
         const SizedBox(height: 24),
 
-        // 鈹€鈹€ Host 鈹€鈹€
+        //  Host
         TextField(
           controller: _hostCtrl,
           decoration: const InputDecoration(
-            labelText: '涓绘満鍦板潃',
-            hintText: '192.168.1.100 鎴?example.com',
+            labelText: '主机地址',
+            hintText: '192.168.1.100 或 example.com',
             prefixIcon: Icon(Icons.computer, size: 18),
             isDense: true,
           ),
         ),
         const SizedBox(height: 12),
 
-        // 鈹€鈹€ Port 鈹€鈹€
+        // Port
         TextField(
           controller: _portCtrl,
           keyboardType: TextInputType.number,
           decoration: const InputDecoration(
-            labelText: '绔彛',
+            labelText: '端口',
             hintText: '22',
             prefixIcon: Icon(Icons.settings_ethernet, size: 18),
             isDense: true,
@@ -557,7 +776,7 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
         const SizedBox(height: 12),
 
-        // 鈹€鈹€ User 鈹€鈹€
+        // User
         TextField(
           controller: _userCtrl,
           decoration: const InputDecoration(
@@ -569,12 +788,12 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
         const SizedBox(height: 12),
 
-        // 鈹€鈹€ Password 鈹€鈹€
+        // Password
         TextField(
           controller: _passwordCtrl,
           obscureText: true,
           decoration: const InputDecoration(
-            labelText: '瀵嗙爜锛堝彲閫夛級',
+            labelText: '密码（可选）',
             hintText: 'SSH 密码，可为空使用密钥认证',
             prefixIcon: Icon(Icons.lock_outline, size: 18),
             isDense: true,
@@ -582,7 +801,7 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
         const SizedBox(height: 24),
 
-        // 鈹€鈹€ Test result indicator 鈹€鈹€
+        // --- Test result indicator
         if (_tested)
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
@@ -596,7 +815,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    _testSuccess ? '杩炴帴娴嬭瘯鎴愬姛' : (_error ?? '杩炴帴娴嬭瘯澶辫触'),
+                    _testSuccess ? '连接测试成功' : (_error ?? '连接测试失败'),
                     style: TextStyle(
                       fontSize: 13,
                       color: _testSuccess ? Colors.green : cs.error,
@@ -607,7 +826,7 @@ class _SetupScreenState extends State<SetupScreen> {
             ),
           ),
 
-        // 鈹€鈹€ Actions 鈹€鈹€
+        // --- Actions
         Row(
           children: [
             Expanded(
@@ -620,7 +839,7 @@ class _SetupScreenState extends State<SetupScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.wifi_find, size: 18),
-                label: const Text('娴嬭瘯杩炴帴'),
+                label: const Text('测试连接'),
               ),
             ),
             const SizedBox(width: 12),
@@ -644,7 +863,7 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
         const SizedBox(height: 12),
 
-        // 鈹€鈹€ Error display 鈹€鈹€
+        // --- Error display
         if (_error != null && !_tested)
           Container(
             width: double.infinity,
@@ -671,7 +890,7 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
-  // 鈹€鈹€ Local Install 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // --- Local Install ---
 
   Widget _buildLocalInstall(ColorScheme cs) {
     return Column(
@@ -685,7 +904,10 @@ class _SetupScreenState extends State<SetupScreen> {
               icon: const Icon(Icons.arrow_back),
               onPressed: () {
                 if (_working) return;
-                setState(() => _step = _WizardStep.welcome);
+                setState(() {
+                  _step = _WizardStep.welcome;
+                  _error = null;
+                });
               },
               style: IconButton.styleFrom(
                 foregroundColor: cs.onSurfaceVariant,
@@ -693,7 +915,7 @@ class _SetupScreenState extends State<SetupScreen> {
             ),
             const SizedBox(width: 8),
             Text(
-              '鏈湴瀹夎',
+              'WSL 本地模式',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w600,
                     color: cs.onSurface,
@@ -703,41 +925,15 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
         const SizedBox(height: 20),
 
-        // 鈹€鈹€ Progress / Status 鈹€鈹€
-        if (_working || _error == null) ...[
-          _buildStatusItem(cs, Icons.terminal, '妫€娴?Hermes 鐜...', true),
-          const SizedBox(height: 8),
-          if (_pipChecked)
-            _buildStatusItem(
-              cs,
-              _pipAvailable ? Icons.check_circle : Icons.cancel_outlined,
-              _pipAvailable ? '妫€娴嬪埌 pip' : '鏈娴嬪埌 pip',
-              _pipAvailable,
-            ),
-          if (_pipChecked && _pipAvailable) ...[
-            const SizedBox(height: 8),
-            _buildStatusItem(cs, Icons.download, '閫氳繃 pip 瀹夎 Hermes Agent...', true),
-          ],
-        ],
-
-        const SizedBox(height: 24),
-
-        // 鈹€鈹€ Linear progress 鈹€鈹€
+        // Status / progress
         if (_working) ...[
-          LinearProgressIndicator(
-            value: _progress > 0 ? _progress : null,
-            minHeight: 4,
-          ),
+          _buildStatusItem(cs, Icons.terminal, _statusText, true),
+          const SizedBox(height: 16),
+          const LinearProgressIndicator(minHeight: 4),
           const SizedBox(height: 12),
-          Text(
-            _statusText,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: cs.onSurfaceVariant,
-                ),
-          ),
         ],
 
-        // 鈹€鈹€ Error 鈥?show manual install fallback 鈹€鈹€
+        // Error — show manual install prompt
         if (_error != null && !_working) ...[
           const SizedBox(height: 16),
           Container(
@@ -753,10 +949,10 @@ class _SetupScreenState extends State<SetupScreen> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.error_outline, size: 18, color: cs.error),
+                    Icon(Icons.info_outline, size: 18, color: cs.error),
                     const SizedBox(width: 8),
                     Text(
-                      '鑷姩瀹夎澶辫触',
+                      '未检测到 Hermes',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -770,39 +966,14 @@ class _SetupScreenState extends State<SetupScreen> {
                   _error!,
                   style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  '璇峰皾璇曟墜鍔ㄥ畨瑁?',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: cs.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Text(
-                    'pip install hermes-agent',
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 Row(
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () => _startLocalInstall(),
                         icon: const Icon(Icons.refresh, size: 16),
-                        label: const Text('閲嶈瘯'),
+                        label: const Text('重试'),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -810,39 +981,7 @@ class _SetupScreenState extends State<SetupScreen> {
                       child: FilledButton.icon(
                         onPressed: _openManualInstallUrl,
                         icon: const Icon(Icons.open_in_browser, size: 16),
-                        label: const Text('鏌ョ湅鏂囨。'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-
-        // 鈹€鈹€ If pip not found 鈥?show manual install info 鈹€鈹€
-        if (_pipChecked && !_pipAvailable && !_working && _error == null) ...[
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: cs.tertiaryContainer.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.info_outline, size: 18, color: cs.tertiary),
-                    const SizedBox(width: 8),
-                    Text(
-                      '姝ｅ湪涓嬭浇 Hermes Bundle...',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: cs.onSurface,
+                        label: const Text('查看文档'),
                       ),
                     ),
                   ],
@@ -880,7 +1019,7 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
-  // 鈹€鈹€ Installing (success) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // --- Installing (success)
 
   Widget _buildInstalling(ColorScheme cs) {
     return Column(
@@ -895,7 +1034,7 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
         const SizedBox(height: 24),
         Text(
-          '璁剧疆瀹屾垚!',
+          '设置完成!',
           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.w600,
                 color: cs.onSurface,
@@ -909,15 +1048,6 @@ class _SetupScreenState extends State<SetupScreen> {
               ),
         ),
         const SizedBox(height: 32),
-        if (_progress > 0)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
-            child: LinearProgressIndicator(
-              value: _progress,
-              minHeight: 4,
-              color: Colors.green,
-            ),
-          ),
       ],
     );
   }

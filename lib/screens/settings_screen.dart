@@ -205,7 +205,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (_selectedMode == ConnectionMode.local) {
       await _cm.switchToLocal();
     } else if (_selectedMode == ConnectionMode.embedded) {
-      await _cm.switchToEmbedded();
+      final ok = await _ensureEmbeddedInstalled();
+      if (ok) await _cm.switchToEmbedded();
     } else {
       final host = _hostController.text.trim();
       final sshConfig = SshConfig(
@@ -224,6 +225,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SnackBar(content: Text('连接配置已保存并应用')),
       );
     }
+  }
+
+  /// Ensure embedded Hermes is installed, auto-download if missing
+  Future<bool> _ensureEmbeddedInstalled() async {
+    final exePath = '${_cm.hermesBundlePath}\\hermes.exe';
+    if (await File(exePath).exists()) return true;
+
+    if (!mounted) return false;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _EmbeddedInstallDialog(
+        downloadUrl: ConnectionManager.defaultHermesDownloadUrl,
+      ),
+    );
+    return ok ?? false;
   }
 
   Future<void> _loadConfig() async {
@@ -1325,6 +1342,116 @@ class _EnvEditorDialogState extends State<_EnvEditorDialog> {
               : const Text('保存'),
         ),
       ],
+    );
+  }
+}
+
+/// 内嵌 Hermes 下载安装对话框
+class _EmbeddedInstallDialog extends StatefulWidget {
+  final String downloadUrl;
+
+  const _EmbeddedInstallDialog({required this.downloadUrl});
+
+  @override
+  State<_EmbeddedInstallDialog> createState() => _EmbeddedInstallDialogState();
+}
+
+class _EmbeddedInstallDialogState extends State<_EmbeddedInstallDialog> {
+  String _status = '正在下载...';
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startInstall();
+  }
+
+  Future<void> _startInstall() async {
+    final cm = ConnectionManager();
+    try {
+      setState(() => _status = '正在下载内嵌 Hermes...');
+      final zipPath = await cm.downloadHermesBundle(
+        widget.downloadUrl,
+        onProgress: (received, total) {
+          if (!mounted) return;
+          final pct = total > 0 ? (received * 100 ~/ total) : 0;
+          setState(() => _status = '正在下载内嵌 Hermes... $pct%');
+        },
+      );
+      if (!mounted) return;
+
+      setState(() => _status = '正在安装...');
+      await cm.extractBundle(zipPath);
+      if (!mounted) return;
+
+      final exePath = '${cm.hermesBundlePath}\hermes.exe';
+      if (!await File(exePath).exists()) {
+        setState(() {
+          _status = '安装失败：解压后未找到 hermes.exe';
+          _failed = true;
+        });
+        return;
+      }
+
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _status = '下载或安装失败: $e';
+        _failed = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('安装内嵌 Hermes'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_failed)
+              Icon(Icons.error_outline, size: 48, color: AppTheme.error)
+            else
+              const SizedBox(
+                width: 48,
+                height: 48,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+            const SizedBox(height: 20),
+            Text(_status, style: TextStyle(color: cs.onSurface)),
+            if (_failed) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('取消'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () {
+                        setState(() {
+                          _failed = false;
+                          _status = '正在下载...';
+                        });
+                        _startInstall();
+                      },
+                      child: const Text('重试'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
