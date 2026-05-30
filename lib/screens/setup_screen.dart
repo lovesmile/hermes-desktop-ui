@@ -385,7 +385,6 @@ class _SetupScreenState extends State<SetupScreen> {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      backgroundColor: cs.surface,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -428,7 +427,7 @@ class _SetupScreenState extends State<SetupScreen> {
           height: 72,
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [Color(0xFF6750A4), Color(0xFFD0BCFF)],
+              colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
             ),
             borderRadius: BorderRadius.circular(20),
           ),

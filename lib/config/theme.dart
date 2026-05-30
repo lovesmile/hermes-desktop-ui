@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 /// References: https://m3.material.io/
 class AppTheme {
   // ── Seed colors ──────────────────────────────────────────────
-  static const Color _seedColor = Color(0xFF6750A4); // M3 default seed
+  static const Color _seedColor = Color(0xFF2563EB); // 科技蓝 — 匹配 logo
   static const Color _errorColor = Color(0xFFB3261E);
 
   // ── Dynamic color scheme from seed ────────────────────────────
@@ -34,20 +34,23 @@ class AppTheme {
 
   // ── Convenient color accessors (backward compat) ──────────────
   static Color get primary => _seedColor;
-  static Color get secondary => const Color(0xFF625B71);
-  static Color get tertiary => const Color(0xFF7D5260);
+  static Color get secondary => const Color(0xFF475569);
+  static Color get tertiary => const Color(0xFFD97706);
   static Color get error => _errorColor;
-  static Color get surface => const Color(0xFFFFFBFE);
-  static Color get surfaceDark => const Color(0xFF1C1B1F);
-  static Color get card => const Color(0xFFF3EDF7);
+  static Color get surface => const Color(0xFFF8FAFC);
+  static Color get surfaceDark => const Color(0xFF0F172A);
+  static Color get card => const Color(0xFFEFF6FF);
 
-  static Color get success => const Color(0xFF4CAF50);
-  static Color get warning => const Color(0xFFFFA726);
-  static Color get info => const Color(0xFF42A5F5);
+  static Color get success => const Color(0xFF10B981);
+  static Color get warning => const Color(0xFFF59E0B);
+  static Color get info => const Color(0xFF38BDF8);
 
-  static Color get primaryContainer => const Color(0xFFEADDFF);
-  static Color get secondaryContainer => const Color(0xFFE8DEF8);
-  static Color get tertiaryContainer => const Color(0xFFFFD8E4);
+  static Color get primaryContainer => const Color(0xFFDBEAFE);
+  static Color get secondaryContainer => const Color(0xFFE2E8F0);
+  static Color get tertiaryContainer => const Color(0xFFF0FDF4);
+
+  /// 渐变配色 — 匹配 logo (#1E293B → #0F172A)
+  static const List<Color> logoGradient = [Color(0xFF1E293B), Color(0xFF0F172A)];
 
   // ── Typography (M3 type scale) ───────────────────────────────
   static TextTheme _textTheme(Brightness brightness) {
@@ -101,6 +104,8 @@ class AppTheme {
   // ── Build theme from scheme ──────────────────────────────────
   static ThemeData _buildTheme(ColorScheme scheme, Brightness brightness) {
     final isDark = brightness == Brightness.dark;
+    final Color bgColor = isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+    final Color cardBg = isDark ? const Color(0xFF1E293B) : const Color(0xFFEFF6FF);
 
     return ThemeData(
       useMaterial3: true,
@@ -117,7 +122,7 @@ class AppTheme {
           ),
         ),
         clipBehavior: Clip.antiAlias,
-        color: scheme.surfaceContainerLow,
+        color: cardBg,
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: scheme.surfaceContainerHigh,
@@ -165,7 +170,7 @@ class AppTheme {
         labelStyle: TextStyle(color: scheme.onSurfaceVariant),
       ),
       navigationRailTheme: NavigationRailThemeData(
-        backgroundColor: scheme.surface,
+        backgroundColor: bgColor,
         indicatorColor: scheme.secondaryContainer,
         labelType: NavigationRailLabelType.all,
         minWidth: 80,
@@ -203,9 +208,9 @@ class AppTheme {
         color: scheme.primary,
         linearTrackColor: scheme.surfaceContainerHighest,
       ),
-      scaffoldBackgroundColor: scheme.surface,
+      scaffoldBackgroundColor: bgColor,
       appBarTheme: AppBarTheme(
-        backgroundColor: scheme.surface,
+        backgroundColor: bgColor,
         elevation: 0,
         centerTitle: false,
         foregroundColor: scheme.onSurface,

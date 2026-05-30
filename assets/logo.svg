@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 深色科技感容器 -->
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+
+  <!-- 左翼 -->
+  <path d="M 256 350
+           Q 120 330 70 190
+           Q 150 270 226 310Z"
+        fill="white"/>
+
+  <!-- 右翼 -->
+  <path d="M 256 350
+           Q 392 330 442 190
+           Q 362 270 286 310Z"
+        fill="white"/>
+
+  <!-- AI 星芒 -->
+  <polygon points="256,100 268,144 312,156 268,168 256,212 244,168 200,156 244,144" fill="white"/>
+</svg>

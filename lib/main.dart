@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'config/theme.dart';
 import 'services/config_service.dart';
 import 'services/connection_manager.dart';
@@ -290,7 +291,7 @@ class MainShellState extends State<MainShell> {
               child: Row(
                 children: [
                   const SizedBox(width: 12),
-                  Image.asset('assets/icon.png', width: 18, height: 18),
+                  SvgPicture.asset('assets/logo.svg', width: 18, height: 18),
                   const SizedBox(width: 8),
                   Text('Hermes Desktop',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurface)),
@@ -359,11 +360,10 @@ class MainShellState extends State<MainShell> {
                   onDestinationSelected: (i) => navigateTo(i),
                   labelType: NavigationRailLabelType.all,
                   groupAlignment: -0.5,
-                  backgroundColor: scheme.surface,
                   indicatorColor: scheme.secondaryContainer,
                   leading: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Image.asset('assets/icon.png', width: 40, height: 40),
+                    child: SvgPicture.asset('assets/logo.svg', width: 40, height: 40),
                   ),
                   destinations: _navItems.map((item) {
                     return NavigationRailDestination(

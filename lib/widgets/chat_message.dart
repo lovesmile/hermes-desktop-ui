@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import '../config/theme.dart';
 
 class ChatMessageWidget extends StatelessWidget {
   final String content;
@@ -42,7 +41,7 @@ class ChatMessageWidget extends StatelessWidget {
               width: 32, height: 32,
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF6750A4), Color(0xFFD0BCFF)],
+                  colors: [Color(0xFF2563EB), Color(0xFF60A5FA)],
                 ),
                 borderRadius: BorderRadius.circular(8),
               ),
