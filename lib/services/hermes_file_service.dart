@@ -274,4 +274,27 @@ class HermesFileService {
     if (!path.startsWith('/')) return '${hermesHome}/scripts/${scriptName}';
     return path;
   }
+
+  // ── directory operations ──
+
+  /// 递归删除目录（按模式适配）
+  Future<bool> deleteDir(String path) async {
+    if (_isEmbedded) {
+      try {
+        final dir = Directory(path);
+        if (!await dir.exists()) return false;
+        await dir.delete(recursive: true);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    try {
+      final r = await _cm.runShell(
+          'rm -rf "$path" 2>/dev/null && echo OK || echo FAIL');
+      return r.stdout.trim() == 'OK';
+    } catch (_) {
+      return false;
+    }
+  }
 }
