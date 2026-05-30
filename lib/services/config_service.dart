@@ -192,24 +192,42 @@ class ConfigService {
     return res.stdout;
   }
 
+  /// 各平台必须填写的凭证字段 — 只有这些字段有实际值时才算"已配置"
+  static const Map<String, List<String>> _platformCredFields = {
+    'telegram': ['bot_token'],
+    'discord': ['bot_token'],
+    'slack': ['bot_token'],
+    'whatsapp': ['phone_number_id', 'access_token'],
+    'feishu': ['app_id', 'app_secret'],
+    'wecom': ['corp_id', 'agent_id', 'secret'],
+    'matrix': ['access_token'],
+    'signal': ['signal_'],
+    'email': ['smtp_host', 'smtp_user'],
+    'dingtalk': ['dingtalk_'],
+    'qqbot': ['qqbot_'],
+  };
+
+  /// 内部名称 → UI 显示名称
+  static const Map<String, String> _platformDisplayNames = {
+    'telegram': 'Telegram',
+    'discord': 'Discord',
+    'slack': 'Slack',
+    'whatsapp': 'WhatsApp',
+    'feishu': '飞书',
+    'wecom': '企业微信',
+    'matrix': 'Matrix',
+    'wechat': '微信',
+    'signal': 'Signal',
+    'email': '邮件',
+    'dingtalk': '钉钉',
+    'qqbot': 'QQ 机器人',
+  };
+
   Future<List<PlatformConfig>> getPlatformConfigs() async {
     final config = await readConfig();
     final env = await getEnvVars();
     final hasWechat = (env['WEIXIN_ACCOUNT_ID'] ?? '').isNotEmpty;
-    final platformNames = [
-      'telegram',
-      'discord',
-      'slack',
-      'whatsapp',
-      'feishu',
-      'wecom',
-      'matrix',
-      'wechat',
-      'signal',
-      'email',
-      'dingtalk',
-      'qqbot'
-    ];
+    final platformNames = _platformCredFields.keys.toList()..add('wechat');
 
     Map<String, dynamic> statusMap = {};
     try {
@@ -222,16 +240,25 @@ class ConfigService {
       if (name == 'wechat') {
         configured = hasWechat;
       } else {
-        // Match "platform_name:" at start of line (not inside comments or examples)
-        final regex = RegExp('^$name:', multiLine: true);
-        configured = regex.hasMatch(config);
+        final keyFields = _platformCredFields[name] ?? [];
+        configured = keyFields.any((f) {
+          final match = RegExp('^\\s+$f:\\s*(.*?)\\s*\$', multiLine: true)
+              .firstMatch(config);
+          if (match == null) return false;
+          final val = match.group(1) ?? '';
+          return val.isNotEmpty && val != "''" && val != '""';
+        });
       }
       var status = 'disconnected';
       if (configured) {
         final live = statusMap[name];
         if (live == 'running' || live == 'connected') status = 'connected';
       }
-      return PlatformConfig(name: name, configured: configured, status: status);
+      return PlatformConfig(
+        name: _platformDisplayNames[name] ?? name,
+        configured: configured,
+        status: status,
+      );
     }).toList();
   }
 }
