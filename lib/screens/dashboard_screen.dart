@@ -36,7 +36,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _cronCount = 0;
   String _homePath = '';
 
-  // 机器状态 — 暂时禁用
+  // 机器状态
   Map<String, dynamic>? _machineStatus;
   // Token 用量 — 暂时禁用
   Map<String, int>? _tokenUsage;
@@ -135,8 +135,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         } catch (_) {}
       }
 
-      // 获取机器状态 — 暂时禁用
-      Map<String, dynamic>? machineStatus;
+      // 获取机器状态
+      final machineStatus = await _cm.getMachineStatus();
       // 获取 Token 用量 — 暂时禁用
       Map<String, int>? tokenUsage;
 
@@ -308,6 +308,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                         const SizedBox(height: 24),
+
+                        // ═══════════════════════════════════════════════
+                        //  机器状态
+                        // ═══════════════════════════════════════════════
+                        _buildMachineCard(cs),
+                        const SizedBox(height: 24),
                       ],
                     ),
                   ),
@@ -421,6 +427,96 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   /// 安全转字符串，null → "-"
   String _fmt(Object? value) => value?.toString() ?? '-';
+
+  Widget _buildMachineCard(ColorScheme cs) {
+    final ms = _machineStatus;
+    if (ms == null) return const SizedBox.shrink();
+    // 内嵌模式不支持 shell 命令查看机器状态
+    if (ms['uptime'] == 'embedded') {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('机器状态',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface)),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: cs.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Text('内嵌模式不支持机器状态监控',
+                      style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('机器状态',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface)),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _machineStat(Icons.memory_outlined, 'CPU',
+                    _formatMachineCpu(ms['cpu']), cs),
+                const SizedBox(width: 24),
+                _machineStat(Icons.storage_outlined, '内存',
+                    _formatMachineMemory(ms['memory']), cs),
+                const SizedBox(width: 24),
+                _machineStat(Icons.disc_full_outlined, '磁盘',
+                    _formatMachineDisk(ms['disk']), cs),
+                const SizedBox(width: 24),
+                _machineStat(Icons.timer_outlined, '运行时间',
+                    _formatMachineUptime(ms['uptime']), cs),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _machineStat(IconData icon, String label, String value, ColorScheme cs) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: cs.onSurfaceVariant),
+              const SizedBox(width: 4),
+              Text(label,
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.w500,
+                  color: cs.onSurface),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+        ],
+      ),
+    );
+  }
 
   Widget _buildOffline(ColorScheme cs) {
     return Center(
