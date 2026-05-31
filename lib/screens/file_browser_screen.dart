@@ -157,7 +157,40 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     }
   }
 
+  static const _maxPreviewSize = 1024 * 1024; // 1 MB
+  static const _binaryExtensions = <String>{
+    '.exe', '.dll', '.so', '.dylib', '.bin', '.obj', '.lib',
+    '.zip', '.tar', '.gz', '.7z', '.rar',
+    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.svg',
+    '.mp3', '.mp4', '.avi', '.mov', '.wav', '.flac',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx',
+    '.db', '.sqlite', '.o', '.pyc', '.class',
+  };
+
   Future<void> _previewFile(String path) async {
+    // 检查扩展名
+    final ext = path.split(RegExp(r'[/\\]')).last.split('.').last.toLowerCase();
+    if (_binaryExtensions.contains('.$ext')) {
+      setState(() {
+        _previewPath = path;
+        _previewLoading = false;
+        _previewContent = '⚠️ 二进制文件无法预览';
+      });
+      return;
+    }
+
+    // 检查文件大小
+    final itemIx = _items.indexWhere((e) => e.path == path);
+    final itemSize = itemIx >= 0 ? _items[itemIx].size : 0;
+    if (itemSize > _maxPreviewSize) {
+      setState(() {
+        _previewPath = path;
+        _previewLoading = false;
+        _previewContent = '⚠️ 文件过大（${_formatSize(itemSize)}），超过预览上限（${_formatSize(_maxPreviewSize)}）';
+      });
+      return;
+    }
+
     setState(() {
       _previewPath = path;
       _previewLoading = true;
