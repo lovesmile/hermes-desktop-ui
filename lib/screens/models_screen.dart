@@ -118,25 +118,30 @@ class _ModelsScreenState extends State<ModelsScreen> {
   List<Map<String, String>> _skills = [];
   Map<String, String> _modelConfig = {};
   bool _loading = true;
+  late final VoidCallback _onRefresh;
 
   @override
   void initState() {
     super.initState();
+    _onRefresh = () => _loadData(forceRefresh: true);
     _loadData();
-    GatewayService().refreshNotifier.addListener(_loadData);
+    GatewayService().refreshNotifier.addListener(_onRefresh);
   }
 
   @override
   void dispose() {
-    GatewayService().refreshNotifier.removeListener(_loadData);
+    GatewayService().refreshNotifier.removeListener(_onRefresh);
     super.dispose();
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadData({bool forceRefresh = false}) async {
+    if (forceRefresh) HermesFileService.clearCache();
     setState(() => _loading = true);
     try {
-      // 读取模型配置（处理嵌套 YAML: model.default, model.provider）
-      final config = await _configService.readConfig();
+      // 批量读取配置 + 技能（local/remote 只需 1 次 SSH 往返）
+      final result = await _configService.readConfigAndSkills();
+      final config = result.config;
+
       final modelInfo = <String, String>{};
       String? currentSection;
       for (final line in config.split('\n')) {
@@ -181,8 +186,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
         }
       }
 
-      // 读取技能列表
-      final skills = await _configService.getSkills();
+      final skills = result.skills;
 
       setState(() {
         _modelConfig = modelInfo;
@@ -235,7 +239,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: _loadData,
+              onRefresh: () => _loadData(forceRefresh: true),
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
@@ -712,7 +716,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('配置已保存，请重启 Gateway')),
         );
-        _loadData();
+        _loadData(forceRefresh: true);
       }
     } catch (e) {
       if (mounted) {

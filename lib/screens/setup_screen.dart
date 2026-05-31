@@ -143,11 +143,12 @@ class _SetupScreenState extends State<SetupScreen> {
       final ok = await ConnectionManager().connectRemote(config);
       if (!mounted) return;
       if (ok) {
-        await ConfigService().writeDesktopConfig({
-          ...await ConfigService().readDesktopConfig(),
-          'connection_mode': 'remote',
-          'ssh_config': config.toJson(),
-        });
+        // connectRemote() -> _ensureRemoteKey() already saved the upgraded
+        // ssh_config (with keyPath) to desktop_config.json — do not
+        // overwrite it with the original password-based config here.
+        final dc = await ConfigService().readDesktopConfig();
+        dc['connection_mode'] = 'remote';
+        await ConfigService().writeDesktopConfig(dc);
         setState(() {
           _step = _WizardStep.configure;
           _working = false;
@@ -794,7 +795,7 @@ class _SetupScreenState extends State<SetupScreen> {
           obscureText: true,
           decoration: const InputDecoration(
             labelText: '密码（可选）',
-            hintText: 'SSH 密码，可为空使用密钥认证',
+            hintText: 'SSH 登录密码',
             prefixIcon: Icon(Icons.lock_outline, size: 18),
             isDense: true,
           ),

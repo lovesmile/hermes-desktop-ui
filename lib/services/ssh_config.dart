@@ -30,4 +30,19 @@ class SshConfig {
       );
 
   bool get isValid => host.isNotEmpty && user.isNotEmpty;
+
+  SshConfig copyWith({
+    String? host,
+    int? port,
+    String? user,
+    String? keyPath,
+    String? password,
+  }) =>
+      SshConfig(
+        host: host ?? this.host,
+        port: port ?? this.port,
+        user: user ?? this.user,
+        keyPath: keyPath ?? this.keyPath,
+        password: password ?? this.password,
+      );
 }

@@ -109,16 +109,14 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
 
     setState(() => _loading = true);
     try {
-      final entries = await _fileService.listFiles(_currentPath);
+      final entries = await _fileService.listFilesWithDetails(_currentPath);
       final dirs = <FileItem>[];
       final files = <FileItem>[];
 
-      for (final name in entries) {
-        final full = '$_currentPath/$name';
-        final isDir = await _fileService.dirExists(full);
-        final size = isDir ? 0 : await _fileService.fileSize(full);
-        final item = FileItem(name: name, path: full, isDir: isDir, size: size);
-        if (isDir) {
+      for (final e in entries) {
+        final full = '$_currentPath/${e.name}';
+        final item = FileItem(name: e.name, path: full, isDir: e.isDir, size: e.size);
+        if (e.isDir) {
           dirs.add(item);
         } else {
           files.add(item);

@@ -358,9 +358,12 @@ class MainShellState extends State<MainShell> {
                               label = '连接中...';
                               break;
                             case ConnStatus.disconnected:
-                            case ConnStatus.error:
                               dotColor = Colors.red;
                               label = '未连接';
+                              break;
+                            case ConnStatus.error:
+                              dotColor = Colors.red;
+                              label = conn.message.isNotEmpty ? conn.message : '未连接';
                               break;
                           }
                           return Container(
@@ -374,7 +377,9 @@ class MainShellState extends State<MainShell> {
                               children: [
                                 Container(width: 8, height: 8, decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle)),
                                 const SizedBox(width: 6),
-                                Text(label, style: TextStyle(fontSize: 12, color: s.onSurfaceVariant)),
+                                Flexible(
+                                  child: Text(label, style: TextStyle(fontSize: 12, color: s.onSurfaceVariant), overflow: TextOverflow.ellipsis),
+                                ),
                               ],
                             ),
                           );

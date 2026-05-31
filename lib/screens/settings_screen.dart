@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import '../config/theme.dart';
 import '../services/gateway_service.dart';
 import '../services/config_service.dart';
@@ -20,6 +19,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _cm = ConnectionManager();
   String _configContent = '';
   bool _loading = true;
+  ConnStatus? _prevConnStatus; // 上次连接状态，用于检测状态转换
 
   // Connection mode
   ConnectionMode _selectedMode = ConnectionMode.local;
@@ -28,9 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _hostController = TextEditingController();
   final _sshPortController = TextEditingController(text: '22');
   final _userController = TextEditingController();
-  final _keyPathController = TextEditingController();
   final _passwordController = TextEditingController();
-  bool _useKeyAuth = false;
 
   // Port override
   final _portController = TextEditingController(text: '8642');
@@ -54,20 +52,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _hostController.dispose();
     _sshPortController.dispose();
     _userController.dispose();
-    _keyPathController.dispose();
     _passwordController.dispose();
     _portController.dispose();
     super.dispose();
   }
 
   void _onConnectionChanged() {
-    if (mounted) {
-      // 只更新状态显示，不覆盖用户正在编辑的模式和端口
-      final state = _cm.state;
-      setState(() {
-        _connectionMessage = state.message;
-        _connectionSuccess = state.status == ConnStatus.connected;
-      });
+    if (!mounted) return;
+    final state = _cm.state;
+    final justConnected = _prevConnStatus != ConnStatus.connected &&
+        state.status == ConnStatus.connected;
+    _prevConnStatus = state.status;
+
+    setState(() {
+      _connectionMessage = state.message;
+      _connectionSuccess = state.status == ConnStatus.connected;
+    });
+
+    if (justConnected) {
+      // 无论哪种模式，连接成功后都重新加载配置
+      _loadConfig();
     }
   }
 
@@ -88,24 +92,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _hostController.text = ssh['host'] ?? '';
         _sshPortController.text = (ssh['port'] ?? 22).toString();
         _userController.text = ssh['user'] ?? '';
-        _keyPathController.text = ssh['keyPath'] ?? '';
         _passwordController.text = ssh['password'] ?? '';
-        _useKeyAuth = ssh['useKeyAuth'] == true;
       });
-    }
-  }
-
-  /// Open file picker for SSH private key selection
-  Future<void> _pickKeyFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      dialogTitle: '选择 SSH 私钥文件',
-      type: FileType.any,
-    );
-    if (result != null && result.files.isNotEmpty) {
-      final path = result.files.single.path;
-      if (path != null && mounted) {
-        setState(() => _keyPathController.text = path);
-      }
     }
   }
 
@@ -118,69 +106,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final host = _hostController.text.trim();
     final port = int.tryParse(_sshPortController.text.trim()) ?? 22;
     final user = _userController.text.trim();
-    final keyPath = _keyPathController.text.trim();
     final password = _passwordController.text.trim();
-    final useKeyAuth = _useKeyAuth;
 
     if (host.isEmpty || user.isEmpty) {
-      setState(() {
-        _connectionMessage = '请填写主机地址和用户名';
-        _connectionSuccess = false;
-      });
+      setState(() { _connectionMessage = '请填写主机地址和用户名'; _connectionSuccess = false; });
+      return;
+    }
+    if (password.isEmpty) {
+      setState(() { _connectionMessage = '请填写 SSH 密码'; _connectionSuccess = false; });
       return;
     }
 
-    setState(() {
-      _testingConnection = true;
-      _connectionMessage = null;
-      _connectionSuccess = null;
-    });
+    setState(() { _testingConnection = true; _connectionMessage = null; _connectionSuccess = null; });
 
     try {
-      if (useKeyAuth && keyPath.isNotEmpty) {
-        // Key authentication
-        final args = <String>[
-          '-o', 'ConnectTimeout=5',
-          '-o', 'StrictHostKeyChecking=accept-new',
-          '-o', 'BatchMode=yes',
-          '-o', 'IdentitiesOnly=yes',
-          '-i', keyPath,
-        ];
-        if (port != 22) { args.add('-p'); args.add(port.toString()); }
-        args.add('$user@$host');
-        args.add('exit');
+      final buf = StringBuffer('sshpass -p ${_shellQuote(password)} ssh');
+      buf.write(' -o ConnectTimeout=5');
+      buf.write(' -o StrictHostKeyChecking=accept-new');
+      if (port != 22) buf.write(' -p $port');
+      buf.write(' ${_shellQuote('$user@$host')}');
+      buf.write(' exit');
 
-        final result = await Process.run('ssh', args);
-        if (result.exitCode == 0) {
-          setState(() { _connectionMessage = 'SSH 连接成功 ✓'; _connectionSuccess = true; });
-        } else {
-          final err = (result.stderr as String).trim();
-          setState(() { _connectionMessage = err.isNotEmpty ? err : '连接失败'; _connectionSuccess = false; });
-        }
-      } else if (password.isNotEmpty) {
-        // Password authentication via sshpass（通过 WSL 调用，因为 sshpass 在 Linux 里）
-        final buf = StringBuffer('sshpass -p ${_shellQuote(password)} ssh');
-        buf.write(' -o ConnectTimeout=5');
-        buf.write(' -o StrictHostKeyChecking=accept-new');
-        if (port != 22) { buf.write(' -p $port'); }
-        buf.write(' ${_shellQuote('$user@$host')}');
-        buf.write(' exit');
-
-        final result = await Process.run('wsl.exe', ['-d', 'Ubuntu', 'bash', '-c', buf.toString()]);
-        if (result.exitCode == 0) {
-          setState(() { _connectionMessage = 'SSH 连接成功 ✓'; _connectionSuccess = true; });
-        } else {
-          final err = (result.stderr as String).trim();
-          setState(() { _connectionMessage = err.isNotEmpty ? err : '连接失败'; _connectionSuccess = false; });
-        }
+      final result = await Process.run('wsl.exe', ['-d', 'Ubuntu', 'bash', '-c', buf.toString()]);
+      if (result.exitCode == 0) {
+        setState(() { _connectionMessage = 'SSH 连接成功 ✓'; _connectionSuccess = true; });
       } else {
-        setState(() { _connectionMessage = '请填写密码或选择密钥'; _connectionSuccess = false; });
+        final err = (result.stderr as String).trim();
+        setState(() { _connectionMessage = err.isNotEmpty ? err : '连接失败'; _connectionSuccess = false; });
       }
     } catch (e) {
-      setState(() {
-        _connectionMessage = '连接异常: $e';
-        _connectionSuccess = false;
-      });
+      setState(() { _connectionMessage = '连接异常: $e'; _connectionSuccess = false; });
     } finally {
       setState(() => _testingConnection = false);
     }
@@ -196,9 +151,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'host': _hostController.text.trim(),
       'port': int.tryParse(_sshPortController.text.trim()) ?? 22,
       'user': _userController.text.trim(),
-      'keyPath': _keyPathController.text.trim(),
       'password': _passwordController.text.trim(),
-      'useKeyAuth': _useKeyAuth,
     };
     await _configService.writeDesktopConfig(config);
 
@@ -213,17 +166,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
         host: host,
         port: int.tryParse(_sshPortController.text.trim()) ?? 22,
         user: _userController.text.trim(),
-        keyPath: _useKeyAuth && _keyPathController.text.trim().isNotEmpty
-            ? _keyPathController.text.trim()
-            : null,
+        password: _passwordController.text.trim(),
       );
       await _cm.switchToRemote(sshConfig);
+      if (mounted) _loadConnectionState();
     }
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('连接配置已保存并应用')),
-      );
+      final st = _cm.state;
+      if (st.status == ConnStatus.connected) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${_selectedMode == ConnectionMode.remote ? "远程" : _selectedMode == ConnectionMode.embedded ? "内嵌" : "本地"}连接成功')),
+        );
+      } else {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('连接失败'),
+            content: Text(st.message.isNotEmpty ? st.message : '请检查配置后重试'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
+            ],
+          ),
+        );
+      }
     }
   }
 
@@ -416,12 +382,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Container(
               padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                color: Theme.of(context).colorScheme.surfaceVariant,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
                 '~/.hermes/config.yaml',
-                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant, fontFamily: 'monospace'),
+                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface, fontFamily: 'monospace'),
               ),
             ),
           ],
@@ -459,11 +425,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   maxLines: null,
                   expands: true,
                   textAlignVertical: TextAlignVertical.top,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 12,
                     height: 1.5,
-                    color: Colors.white,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
@@ -543,18 +509,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: 16),
                 ],
 
-                // ── Port Override Section ──
-                _buildSection('端口设置', [
-                  _buildPortOverrideField(colorScheme),
-                ]),
-                const SizedBox(height: 16),
+                // ── Port Override Section (not needed in remote mode — port auto-handled) ──
+                if (_selectedMode != ConnectionMode.remote)
+                  _buildSection('端口设置', [
+                    _buildPortOverrideField(colorScheme),
+                  ]),
+                if (_selectedMode != ConnectionMode.remote) const SizedBox(height: 16),
 
                 // ── Apply Button ──
                 Row(
                   children: [
                     Expanded(
                       child: FilledButton.icon(
-                        onPressed: _saveConnectionConfig,
+                        onPressed: _cm.state.status == ConnStatus.connecting ? null : _saveConnectionConfig,
                         icon: const Icon(Icons.check, size: 18),
                         label: const Text('应用连接配置'),
                       ),
@@ -582,79 +549,81 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ]),
                 SizedBox(height: 16),
 
-                // ── Gateway section ──
-                _buildSection('Gateway 设置', [
-                  FutureBuilder<String>(
-                    future: _configService.getGatewayUrl(),
-                    builder: (context, snapshot) {
-                      final url = snapshot.data ?? 'http://localhost:8642';
-                      return ListTile(
-                        title: Row(
-                          children: [
-                            Text('Gateway 地址',
-                                style: TextStyle(fontSize: 14)),
-                            const SizedBox(width: 4),
-                            GestureDetector(
-                              onTap: () {
-                                showDialog(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    title: const Text('什么是 Gateway?'),
-                                    content: const Text(
-                                      'Hermes Gateway 是 Hermes Desktop 与 Hermes Agent 之间的桥梁。\n\n'
-                                      '• 本地模式: Gateway 运行在本机 localhost:8642\n'
-                                      '• 远程模式: Gateway 运行在远程服务器上，通过 SSH 连接\n\n'
-                                      'Gateway 负责转发会话请求、管理令牌、提供机器状态和令牌用量统计等功能。'
-                                      '请确保 Gateway 地址与服务器实际监听地址一致。',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(ctx),
-                                        child: const Text('知道了'),
+                // ── Gateway section (hidden in remote — tunnel URL auto-set) ──
+                if (_selectedMode != ConnectionMode.remote) ...[
+                  _buildSection('Gateway 设置', [
+                    FutureBuilder<String>(
+                      future: _configService.getGatewayUrl(),
+                      builder: (context, snapshot) {
+                        final url = snapshot.data ?? 'http://localhost:8642';
+                        return ListTile(
+                          title: Row(
+                            children: [
+                              Text('Gateway 地址',
+                                  style: TextStyle(fontSize: 14)),
+                              const SizedBox(width: 4),
+                              GestureDetector(
+                                onTap: () {
+                                  showDialog(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      title: const Text('什么是 Gateway?'),
+                                      content: const Text(
+                                        'Hermes Gateway 是 Hermes Desktop 与 Hermes Agent 之间的桥梁。\n\n'
+                                        '• 本地模式: Gateway 运行在本机 localhost:8642\n'
+                                        '• 远程模式: Gateway 运行在远程服务器上，通过 SSH 连接\n\n'
+                                        'Gateway 负责转发会话请求、管理令牌、提供机器状态和令牌用量统计等功能。'
+                                        '请确保 Gateway 地址与服务器实际监听地址一致。',
                                       ),
-                                    ],
-                                  ),
-                                );
-                              },
-                              child: Icon(Icons.help_outline, size: 16,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                        subtitle: Text(url,
-                            style: TextStyle(
-                                fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                fontFamily: 'monospace')),
-                        trailing: const Icon(Icons.edit_outlined, size: 20),
-                        onTap: () => _showGatewayUrlEditor(url),
-                        contentPadding: EdgeInsets.zero,
-                      );
-                    },
-                  ),
-                  FutureBuilder<String>(
-                    future: _gateway.apiKey,
-                    builder: (context, snapshot) {
-                      final key = snapshot.data ?? '';
-                      final masked = key.isEmpty
-                          ? '未设置'
-                          : '${key.substring(0, 3)}****${key.length > 6 ? key.substring(key.length - 3) : ''}';
-                      return ListTile(
-                        title: Text('API Key',
-                            style: TextStyle(fontSize: 14)),
-                        subtitle: Text(masked,
-                            style: TextStyle(
-                                fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                fontFamily: 'monospace')),
-                        trailing: const Icon(Icons.edit_outlined, size: 20),
-                        onTap: () => _showApiKeyEditor(key),
-                        contentPadding: EdgeInsets.zero,
-                      );
-                    },
-                  ),
-                  _buildSettingRow('超时时间', '30 分钟'),
-                  _buildSettingRow('日志级别', 'INFO'),
-                ]),
-                SizedBox(height: 16),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(ctx),
+                                          child: const Text('知道了'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                                child: Icon(Icons.help_outline, size: 16,
+                                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                          subtitle: Text(url,
+                              style: TextStyle(
+                                  fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  fontFamily: 'monospace')),
+                          trailing: const Icon(Icons.edit_outlined, size: 20),
+                          onTap: () => _showGatewayUrlEditor(url),
+                          contentPadding: EdgeInsets.zero,
+                        );
+                      },
+                    ),
+                    FutureBuilder<String>(
+                      future: _gateway.apiKey,
+                      builder: (context, snapshot) {
+                        final key = snapshot.data ?? '';
+                        final masked = key.isEmpty
+                            ? '未设置'
+                            : '${key.substring(0, 3)}****${key.length > 6 ? key.substring(key.length - 3) : ''}';
+                        return ListTile(
+                          title: Text('API Key',
+                              style: TextStyle(fontSize: 14)),
+                          subtitle: Text(masked,
+                              style: TextStyle(
+                                  fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  fontFamily: 'monospace')),
+                          trailing: const Icon(Icons.edit_outlined, size: 20),
+                          onTap: () => _showApiKeyEditor(key),
+                          contentPadding: EdgeInsets.zero,
+                        );
+                      },
+                    ),
+                    _buildSettingRow('超时时间', '30 分钟'),
+                    _buildSettingRow('日志级别', 'INFO'),
+                  ]),
+                  SizedBox(height: 16),
+                ],
 
                 // ── Config file ──
                 _buildSection('配置文件', [
@@ -756,7 +725,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final selected = _selectedMode == value;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: () => setState(() => _selectedMode = value),
+      onTap: () async {
+        if (_selectedMode == value) return;
+        await _cm.disconnect();
+        setState(() {
+          _selectedMode = value;
+          _connectionSuccess = null;
+          _connectionMessage = null;
+        });
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.all(14),
@@ -775,7 +752,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Radio<ConnectionMode>(
               value: value,
               groupValue: _selectedMode,
-              onChanged: (v) => setState(() => _selectedMode = v!),
+              onChanged: (v) async {
+                if (_selectedMode == v) return;
+                await _cm.disconnect();
+                setState(() {
+                  _selectedMode = v!;
+                  _connectionSuccess = null;
+                  _connectionMessage = null;
+                });
+              },
               activeColor: colorScheme.primary,
             ),
             const SizedBox(width: 8),
@@ -943,63 +928,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 12),
 
-        // ── 认证切换: 密码 / 密钥 ──
-        Row(
-          children: [
-            Icon(Icons.lock_outline, size: 18, color: colorScheme.onSurfaceVariant),
-            const SizedBox(width: 8),
-            Text('使用密钥登录?',
-                style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
-            Switch(
-              value: _useKeyAuth,
-              onChanged: (v) => setState(() => _useKeyAuth = v),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-
-        // ── 密码 或 密钥路径 ──
-        if (!_useKeyAuth)
-          TextField(
-            controller: _passwordController,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: '密码',
-              hintText: 'SSH 登录密码',
-              prefixIcon: Icon(Icons.lock_outline, size: 20),
-              helperText: '远程服务器的 SSH 登录密码',
-              helperMaxLines: 2,
-            ),
-          )
-        else ...[
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _keyPathController,
-                  decoration: const InputDecoration(
-                    labelText: '密钥路径',
-                    hintText: '~/.ssh/id_rsa',
-                    prefixIcon: Icon(Icons.vpn_key_outlined, size: 20),
-                    helperText: 'SSH 私钥文件路径，如 ~/.ssh/id_rsa',
-                    helperMaxLines: 2,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                onPressed: () => _pickKeyFile(),
-                icon: Icon(Icons.folder_open, size: 20),
-                tooltip: '浏览...',
-                style: IconButton.styleFrom(
-                  backgroundColor: colorScheme.surfaceContainerHighest,
-                  foregroundColor: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+        // ── SSH 密码 ──
+        TextField(
+          controller: _passwordController,
+          obscureText: true,
+          decoration: const InputDecoration(
+            labelText: '密码',
+            hintText: 'SSH 登录密码',
+            prefixIcon: Icon(Icons.lock_outline, size: 20),
+            helperText: '远程服务器的 SSH 登录密码，首次连接后自动切换为密钥认证',
+            helperMaxLines: 2,
           ),
-        ],
+        ),
       ],
     );
   }
@@ -1075,10 +1015,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return TextField(
       controller: _portController,
       decoration: InputDecoration(
-        labelText: 'Gateway 端口',
+        labelText: _selectedMode == ConnectionMode.remote ? '远程 Gateway 端口' : 'Gateway 端口',
         hintText: '8642',
         prefixIcon: Icon(Icons.router_outlined, size: 20),
-        helperText: '默认 8642，修改后需要保存配置并重启 Gateway',
+        helperText: _selectedMode == ConnectionMode.remote
+            ? '远程服务器上 Hermes Gateway 的监听端口，默认 8642'
+            : '默认 8642，修改后需要保存配置并重启 Gateway',
         helperMaxLines: 2,
       ),
       keyboardType: TextInputType.number,
@@ -1142,7 +1084,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: isRunning ? null : () => _cm.startLocalGateway(),
+                  onPressed: (isRunning || conn.status == ConnStatus.connecting)
+                      ? null
+                      : () => _cm.startLocalGateway(),
                   icon: const Icon(Icons.play_arrow, size: 18),
                   label: const Text('启动'),
                 ),

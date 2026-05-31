@@ -39,12 +39,14 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
     setState(() => _loading = true);
     try {
       final platforms = await _configService.getPlatformConfigs();
+      if (!mounted) return;
       setState(() {
         _platforms = platforms;
         _loading = false;
       });
     } catch (e) {
-      // Fallback to defaults
+      debugPrint('PlatformsScreen: failed to load platforms: $e');
+      if (!mounted) return;
       setState(() {
         _platforms = PlatformConfig.defaults;
         _loading = false;

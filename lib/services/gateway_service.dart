@@ -226,19 +226,20 @@ class GatewayService {
       final logSource = source ?? 'agent';
       String? content;
 
-      if (ConnectionManager().state.mode == ConnectionMode.embedded) {
-        try {
-          final home = ConfigService.resolveHermesHome();
-          final f = File('$home/logs/$logSource.log');
-          if (await f.exists()) content = await f.readAsString();
-        } catch (_) {}
-      } else {
-        // Use bridge-based reading with mode-aware path
-        final hermesPath = await ConnectionManager().resolveHermesHome();
-        final result = await ConnectionManager().runShell(
-            'cat "$hermesPath/logs/$logSource.log" 2>/dev/null || true',
-            allowFailure: true);
-        if (result.stdout.isNotEmpty) content = result.stdout;
+      switch (ConnectionManager().state.mode) {
+        case ConnectionMode.embedded:
+          try {
+            final home = ConfigService.resolveHermesHome();
+            final f = File('$home/logs/$logSource.log');
+            if (await f.exists()) content = await f.readAsString();
+          } catch (_) {}
+        case ConnectionMode.local:
+        case ConnectionMode.remote:
+          final hermesPath = await ConnectionManager().resolveHermesHome();
+          final result = await ConnectionManager().runShell(
+              'cat "$hermesPath/logs/$logSource.log" 2>/dev/null || true',
+              allowFailure: true);
+          if (result.stdout.isNotEmpty) content = result.stdout;
       }
 
       if (content != null && content.isNotEmpty) {
@@ -277,26 +278,30 @@ class GatewayService {
   /// 清除指定源的所有日志文件内容
   Future<bool> clearLogs(String source) async {
     try {
-      if (ConnectionManager().state.mode == ConnectionMode.embedded) {
-        final home = ConfigService.resolveHermesHome();
-        final logPath = '$home/logs/$source.log';
-        final file = File(logPath);
-        if (await file.exists()) {
-          await file.writeAsString('');
-        } else {
-          await file.create(recursive: true);
+      switch (ConnectionManager().state.mode) {
+        case ConnectionMode.embedded: {
+          final home = ConfigService.resolveHermesHome();
+          final logPath = '$home/logs/$source.log';
+          final file = File(logPath);
+          if (await file.exists()) {
+            await file.writeAsString('');
+          } else {
+            await file.create(recursive: true);
+          }
+          refreshNotifier.value++;
+          return true;
         }
-        refreshNotifier.value++;
-        return true;
+        case ConnectionMode.local:
+        case ConnectionMode.remote: {
+          final hermesPath = await ConnectionManager().resolveHermesHome();
+          final result = await ConnectionManager().runShell(
+              ': > "$hermesPath/logs/$source.log" 2>/dev/null',
+              allowFailure: true);
+          final ok = result.exitCode == 0;
+          if (ok) refreshNotifier.value++;
+          return ok;
+        }
       }
-      // Local/remote: 通过 shell 清空（路径由 resolveHermesHome 提供）
-      final hermesPath = await ConnectionManager().resolveHermesHome();
-      final result = await ConnectionManager().runShell(
-          ': > "$hermesPath/logs/$source.log" 2>/dev/null',
-          allowFailure: true);
-      final ok = result.exitCode == 0;
-      if (ok) refreshNotifier.value++;
-      return ok;
     } catch (_) {
       return false;
     }

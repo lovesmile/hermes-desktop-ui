@@ -24,6 +24,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final _localDb = LocalDatabase();
   final _fileService = HermesFileService();
   bool _dashboardLoading = false;
+  late final VoidCallback _onRefresh;
 
   int _sessionCount = 0;
   int _skillCount = 0;
@@ -44,17 +45,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadData(showLoading: true);
     widget.tabNotifier?.addListener(_onTabChanged);
     _cm.stateNotifier.addListener(_onConnectionChanged);
-    GatewayService().refreshNotifier.addListener(_loadData);
+    _onRefresh = () => _loadData();
+    GatewayService().refreshNotifier.addListener(_onRefresh);
   }
 
   @override
   void dispose() {
     widget.tabNotifier?.removeListener(_onTabChanged);
     _cm.stateNotifier.removeListener(_onConnectionChanged);
-    GatewayService().refreshNotifier.removeListener(_loadData);
+    GatewayService().refreshNotifier.removeListener(_onRefresh);
     super.dispose();
   }
 
@@ -70,8 +72,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _loadData() async {
-    setState(() => _dashboardLoading = true);
+  Future<void> _loadData({bool showLoading = false}) async {
+    if (showLoading) setState(() => _dashboardLoading = true);
     try {
       final localSessions = await _localDb.getSessions();
       int sessions = localSessions.length;
@@ -180,7 +182,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadData,
+            onPressed: () => _loadData(showLoading: true),
             tooltip: '刷新',
           ),
           const SizedBox(width: 8),
@@ -532,7 +534,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               style: TextStyle(color: cs.onSurfaceVariant)),
           const SizedBox(height: 24),
           FilledButton.icon(
-            onPressed: _loadData,
+            onPressed: () => _loadData(showLoading: true),
             icon: const Icon(Icons.refresh),
             label: const Text('重新连接'),
           ),

@@ -74,6 +74,9 @@ class ConnectionManager {
 
   Timer? _healthTimer;
 
+  // 最后一条远程 Gateway 启动命令的输出（用于错误展示）
+  String _lastRemoteGatewayOutput = '';
+
   /// SSH 隧道本地端口（与远程 gateway 端口不同，避免冲突）
   int _tunnelPort = 0;
 
@@ -152,49 +155,71 @@ class ConnectionManager {
   }
 
   Future<String> resolveHermesHome() async {
-    if (state.mode == ConnectionMode.embedded) {
-      final userHome = Platform.environment['USERPROFILE'] ??
-          Platform.environment['HOME'] ??
-          '';
-      return '$userHome\\.hermes';
+    switch (state.mode) {
+      case ConnectionMode.embedded:
+        final userHome = Platform.environment['USERPROFILE'] ??
+            Platform.environment['HOME'] ??
+            '';
+        return '$userHome\\.hermes';
+      case ConnectionMode.remote:
+        final rr = await runShell('pwd', allowFailure: true);
+        final rh = rr.stdout.trim().isNotEmpty ? rr.stdout.trim() : '/home/unknown';
+        return '$rh/.hermes';
+      case ConnectionMode.local:
+        final lr = await runShell('echo \$HOME', allowFailure: true);
+        final lh = lr.stdout.trim().isNotEmpty ? lr.stdout.trim() : r'$HOME';
+        return '$lh/.hermes';
     }
-    final r = await runShell('echo \$HOME', allowFailure: true);
-    final home = r.stdout.trim().isNotEmpty ? r.stdout.trim() : r'$HOME';
-    return '$home/.hermes';
   }
 
   Future<({String stdout, int exitCode})> readTextFile(
     String path, {
     bool allowFailure = false,
   }) {
-    if (state.mode == ConnectionMode.embedded) {
-      return runShell('type "${path.replaceAll('"', '""')}" 2>nul',
-          allowFailure: allowFailure);
+    switch (state.mode) {
+      case ConnectionMode.embedded:
+        return runShell('type "${path.replaceAll('"', '""')}" 2>nul',
+            allowFailure: allowFailure);
+      case ConnectionMode.local:
+      case ConnectionMode.remote:
+        return runShell("cat '${path.replaceAll("'", "'\\''")}' 2>/dev/null",
+            allowFailure: allowFailure);
     }
-    return runShell("cat '${path.replaceAll("'", "'\\''")}' 2>/dev/null",
-        allowFailure: allowFailure);
   }
+
+  String _cronScript(String joined) =>
+      'export PATH="\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH"; '
+      'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
+      'if [ -z "\$HERMES_BIN" ] && [ -x "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
+      'if [ -z "\$HERMES_BIN" ] && [ -f "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
+      'if [ -z "\$HERMES_BIN" ]; then echo "hermes command not found"; exit 127; fi; '
+      '"\$HERMES_BIN" --accept-hooks cron $joined 2>&1';
 
   Future<({String stdout, int exitCode})> runHermesCron(
     List<String> args, {
     bool allowFailure = false,
   }) {
-    if (state.mode == ConnectionMode.embedded) {
-      final hermesExe = '$hermesBundlePath\\hermes.exe';
-      final joined = args.map((a) => '"${a.replaceAll('"', '""')}"').join(' ');
-      final cmd =
-          'if exist "${hermesExe.replaceAll('"', '""')}" ( "${hermesExe.replaceAll('"', '""')}" --accept-hooks cron $joined ) else ( hermes --accept-hooks cron $joined ) 2>&1';
-      return runShell(cmd, allowFailure: allowFailure);
+    switch (state.mode) {
+      case ConnectionMode.embedded: {
+        final hermesExe = '$hermesBundlePath\\hermes.exe';
+        final joined =
+            args.map((a) => '"${a.replaceAll('"', '""')}"').join(' ');
+        final cmd =
+            'if exist "${hermesExe.replaceAll('"', '""')}" ( "${hermesExe.replaceAll('"', '""')}" --accept-hooks cron $joined ) else ( hermes --accept-hooks cron $joined ) 2>&1';
+        return runShell(cmd, allowFailure: allowFailure);
+      }
+      case ConnectionMode.local: {
+        final joined =
+            args.map((a) => "'${a.replaceAll("'", "'\\''")}'").join(' ');
+        return runShell(_cronScript(joined), allowFailure: allowFailure);
+      }
+      case ConnectionMode.remote: {
+        final joined =
+            args.map((a) => "'${a.replaceAll("'", "'\\''")}'").join(' ');
+        return runShell(_cronScript(joined),
+            allowFailure: allowFailure);
+      }
     }
-
-    final joined = args.map((a) => "'${a.replaceAll("'", "'\\''")}'").join(' ');
-    final cmd = 'export PATH="\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH"; '
-        'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
-        'if [ -z "\$HERMES_BIN" ] && [ -x "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
-        'if [ -z "\$HERMES_BIN" ] && [ -f "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
-        'if [ -z "\$HERMES_BIN" ]; then echo "hermes command not found"; exit 127; fi; '
-        '"\$HERMES_BIN" --accept-hooks cron $joined 2>&1';
-    return runShell(cmd, allowFailure: allowFailure);
   }
 
   String _normalizeCronCommand(String cmd) {
@@ -203,17 +228,16 @@ class ConnectionManager {
 
     final suffix = trim.substring('hermes --accept-hooks cron '.length);
 
-    if (state.mode == ConnectionMode.embedded) {
-      final hermesExe = '$hermesBundlePath\\hermes.exe'.replaceAll('"', '""');
-      return 'if exist "$hermesExe" ( "$hermesExe" --accept-hooks cron $suffix ) else ( hermes --accept-hooks cron $suffix )';
+    switch (state.mode) {
+      case ConnectionMode.embedded: {
+        final hermesExe = '$hermesBundlePath\\hermes.exe'.replaceAll('"', '""');
+        return 'if exist "$hermesExe" ( "$hermesExe" --accept-hooks cron $suffix ) else ( hermes --accept-hooks cron $suffix )';
+      }
+      case ConnectionMode.local:
+        return _cronScript(suffix);
+      case ConnectionMode.remote:
+        return _cronScript(suffix);
     }
-
-    return 'export PATH="\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH"; '
-        'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
-        'if [ -z "\$HERMES_BIN" ] && [ -x "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
-        'if [ -z "\$HERMES_BIN" ] && [ -f "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
-        'if [ -z "\$HERMES_BIN" ]; then echo "hermes command not found"; exit 127; fi; '
-        '"\$HERMES_BIN" --accept-hooks cron $suffix';
   }
 
   Future<ProcessResult> execBash(String command) async {
@@ -253,8 +277,92 @@ class ConnectionManager {
     return false;
   }
 
+  /// Shell 单引号转义（防止 bash 展开特殊字符）
+  static String _shQuote(String s) =>
+      "'${s.replaceAll("'", "'\\''")}'";
+
+  /// 首次密码连接时自动生成密钥并上传，后续改用密钥认证
+  Future<SshConfig> _ensureRemoteKey(SshConfig config) async {
+    // ── recovery: keyPath 设了但文件被删 → 用保存的密码重新生成 ──
+    if ((config.password == null || config.password!.isEmpty) &&
+        config.keyPath != null && config.keyPath!.isNotEmpty) {
+      if (await File(config.keyPath!).exists()) return config;
+      final pw = ((await ConfigService().readDesktopConfig())['ssh_config']
+              as Map?)?['password'] as String?;
+      if (pw != null && pw.isNotEmpty) config = config.copyWith(password: pw);
+      else return config;
+    }
+
+    if (config.password == null || config.password!.isEmpty) return config;
+    if (config.keyPath != null && config.keyPath!.isNotEmpty) return config;
+
+    final home = Platform.environment['USERPROFILE'] ?? '';
+    final sshDir = '$home\\.hermes\\ssh';
+    final keyPath = '$sshDir\\id_ed25519_${config.host}';
+
+    if (await File(keyPath).exists()) {
+      return config.copyWith(keyPath: keyPath, password: null);
+    }
+
+    try {
+      await Directory(sshDir).create(recursive: true);
+      final gen = await Process.run('ssh-keygen', [
+        '-t', 'ed25519',
+        '-f', keyPath,
+        '-N', '',
+        '-q',
+      ]);
+      if (gen.exitCode != 0) return config;
+
+      final pubKey = await File('$keyPath.pub').readAsString();
+      final escapedPw = _shQuote(config.password!);
+      final sshArgs = [
+        '-o', 'StrictHostKeyChecking=accept-new',
+        '-o', 'ConnectTimeout=10',
+      ];
+      if (config.port != 22) {
+        sshArgs.addAll(['-p', config.port.toString()]);
+      }
+      sshArgs.add('${config.user}@${config.host}');
+
+      final uploadProc = await Process.start('wsl.exe', [
+        '-d', _wslDistro,
+        'sshpass', '-p', escapedPw, 'ssh',
+        ...sshArgs,
+        'mkdir -p ~/.ssh && chmod 700 ~/.ssh && '
+            'cat >> ~/.ssh/authorized_keys && '
+            'chmod 600 ~/.ssh/authorized_keys',
+      ]);
+      uploadProc.stdin.writeln(pubKey);
+      uploadProc.stdin.close();
+      final uploadCode = await uploadProc.exitCode;
+
+      if (uploadCode != 0) return config;
+
+      // 保存配置，保留密码用于密钥文件丢失后的恢复
+      final dc = await ConfigService().readDesktopConfig();
+      dc['ssh_config'] = {
+        'host': config.host,
+        'port': config.port,
+        'user': config.user,
+        'keyPath': keyPath,
+        'password': config.password,
+      };
+      await ConfigService().writeDesktopConfig(dc);
+
+      return config.copyWith(keyPath: keyPath, password: null);
+    } catch (_) {
+      return config;
+    }
+  }
+
   Future<bool> connectRemote(SshConfig config) async {
     await disconnect();
+
+    // 从配置文件读取最新 gateway 端口，避免 state.port 过期
+    final desktopConfig = await ConfigService().readDesktopConfig();
+    final remoteGatewayPort = desktopConfig['local_port'] as int? ?? 8642;
+
     stateNotifier.value = state.copyWith(
       status: ConnStatus.connecting,
       mode: ConnectionMode.remote,
@@ -264,13 +372,42 @@ class ConnectionManager {
     _tunnelPort = await _findFreePort();
     _remoteExecutor.setTunnelPorts(
       tunnel: _tunnelPort,
-      remote: state.port,
+      remote: remoteGatewayPort,
     );
 
-    if (await _remoteBridge.connect(
-      config: SshConfigWrapper(config),
-      localPort: _tunnelPort,
-    )) {
+    // 密码认证 → 自动升级为密钥认证（后续不再依赖 WSL/sshpass）
+    config = await _ensureRemoteKey(config);
+
+    bool connected;
+    try {
+      connected = await _remoteBridge.connect(
+        config: SshConfigWrapper(config),
+        localPort: _tunnelPort,
+      );
+    } catch (e) {
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.error,
+        message: '连接失败: $e',
+      );
+      return false;
+    }
+
+    if (connected) {
+      // Gateway 已在运行 — 将远程 API_SERVER_KEY 同步到本地
+      final keyResult = await runShell(
+        "grep '^API_SERVER_KEY=' ~/.hermes/.env | head -1 | cut -d= -f2-",
+        allowFailure: true,
+      );
+      final remoteKey = keyResult.stdout.trim();
+      if (remoteKey.isNotEmpty) {
+        final dc2 = await ConfigService().readDesktopConfig();
+        if (dc2['api_key'] != remoteKey) {
+          dc2['api_key'] = remoteKey;
+          await ConfigService().writeDesktopConfig(dc2);
+          GatewayService().invalidateApiKey();
+        }
+      }
+
       final ns = remoteNamespaceOf(config);
       await _applyConnectionContext(namespace: ns, serverId: config.host);
       stateNotifier.value =
@@ -278,10 +415,139 @@ class ConnectionManager {
       return true;
     }
 
+    // 隧道已建立但 Gateway 无响应 — 尝试远程启动 Gateway
+    if (_remoteExecutor.tunnelEstablished) {
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.connecting,
+        message: '远程 Gateway 未运行，正在自动启动...',
+      );
+      await _startRemoteGateway();
+      // 等待 8 秒让 Gateway 完成启动
+      for (var i = 0; i < 8; i++) {
+        await Future.delayed(const Duration(seconds: 1));
+        if (await checkLocal()) break;
+      }
+      if (await checkLocal()) {
+        final ns = remoteNamespaceOf(config);
+        await _applyConnectionContext(namespace: ns, serverId: config.host);
+        return true;
+      }
+      // 从 stdout 提取具体失败原因展示给用户
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.error,
+        message: _lastRemoteGatewayOutput.isNotEmpty ? '远程 Gateway 启动失败: $_lastRemoteGatewayOutput' : '远程 Gateway 启动失败，请手动登录服务器运行: hermes gateway run',
+      );
+      return false;
+    }
+
+    final errMsg = _remoteExecutor.lastError;
     stateNotifier.value = state.copyWith(
       status: ConnStatus.error,
-      message: '连接失败',
+      message: errMsg != null ? '连接失败: $errMsg' : '连接失败',
     );
+    return false;
+  }
+
+  Future<bool> _startRemoteGateway() async {
+    // 生成唯一 API key
+    final hostnameResult = await runShell('hostname', allowFailure: true);
+    final hostname = hostnameResult.stdout.trim();
+    final timestamp = (DateTime.now().millisecondsSinceEpoch ~/ 1000).toString();
+    final generatedKey = 'hermes-desktop-${hostname.isNotEmpty ? hostname : "remote"}-$timestamp';
+
+    // 读取远程 gateway 端口（与 SSH 隧道目标端口一致）
+    final remotePort = state.port;
+
+    // 单次 SSH 连接：配置 .env + 尝试所有启动方式 + 等待端口就绪
+    final setupCmd = r'''
+# 1. 配置 .env
+mkdir -p ~/.hermes
+touch ~/.hermes/.env
+sed -i '/^API_SERVER_ENABLED=/d' ~/.hermes/.env
+sed -i '/^API_SERVER_KEY=/d' ~/.hermes/.env
+echo "API_SERVER_ENABLED=true" >> ~/.hermes/.env
+echo "API_SERVER_KEY=__API_KEY__" >> ~/.hermes/.env
+echo "ENV_OK"
+
+PORT=__REMOTE_PORT__
+
+wait_port() {
+  local i=0
+  while [ $i -lt 10 ]; do
+    if ss -tln 2>/dev/null | grep -q ":$PORT "; then
+      echo "PORT_READY"
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "PORT_TIMEOUT"
+  return 1
+}
+
+# 2. 尝试 systemd
+if systemctl --user status hermes-gateway >/dev/null 2>&1; then
+  ERR=$(systemctl --user restart hermes-gateway 2>&1 || systemctl --user start hermes-gateway 2>&1)
+  if [ -n "$ERR" ]; then
+    echo "SYSTEMD_STDERR: $ERR"
+  fi
+  wait_port && { echo "SYSTEMD_OK"; exit 0; }
+  echo "SYSTEMD_FAIL"
+fi
+
+# 3. fallback: python venv
+if [ -d ~/.hermes/hermes-agent/venv ]; then
+  . ~/.hermes/hermes-agent/venv/bin/activate
+  cd ~/.hermes/hermes-agent
+  pkill -f "hermes_cli\.main gateway" 2>/dev/null || true
+  sleep 1
+  API_SERVER_ENABLED=true API_SERVER_KEY=__API_KEY__ \
+    nohup python -m hermes_cli.main gateway run --replace \
+    > ~/.hermes/logs/gateway.log 2>&1 &
+  disown
+  wait_port && { echo "VENV_OK"; exit 0; }
+fi
+
+# 4. fallback: hermes binary
+HERMES_BIN="$(command -v hermes 2>/dev/null || true)"
+if [ -z "$HERMES_BIN" ] && [ -x "$HOME/.local/bin/hermes" ]; then
+  HERMES_BIN="$HOME/.local/bin/hermes"
+fi
+if [ -n "$HERMES_BIN" ]; then
+  pkill -f "hermes gateway" 2>/dev/null || true
+  sleep 1
+  API_SERVER_ENABLED=true API_SERVER_KEY=__API_KEY__ \
+    nohup "$HERMES_BIN" gateway run --replace \
+    > ~/.hermes/logs/gateway.log 2>&1 &
+  disown
+  wait_port && { echo "BINARY_OK"; exit 0; }
+fi
+
+echo "NO_METHOD"
+'''.replaceAll('__API_KEY__', generatedKey)
+       .replaceAll('__REMOTE_PORT__', remotePort.toString());
+
+    final setupResult = await runShell(setupCmd.trim(), allowFailure: true);
+    _lastRemoteGatewayOutput = setupResult.stdout.trim().replaceAll('\r\n', '\n');
+
+    if (_lastRemoteGatewayOutput.contains('NO_METHOD')) return false;
+
+    // 将生成的 API key 同步到本地配置
+    final dc = await ConfigService().readDesktopConfig();
+    dc['api_key'] = generatedKey;
+    await ConfigService().writeDesktopConfig(dc);
+    GatewayService().invalidateApiKey();
+
+    // 等待端口就绪（最多再等 10 秒）
+    _lastRemoteGatewayOutput += '\nwaiting for port...';
+    for (var i = 0; i < 10; i++) {
+      await Future.delayed(const Duration(seconds: 1));
+      if (await checkLocal()) {
+        _lastRemoteGatewayOutput += '\nport: READY';
+        return true;
+      }
+    }
+    _lastRemoteGatewayOutput += '\nport: TIMEOUT';
     return false;
   }
 
@@ -297,18 +563,53 @@ class ConnectionManager {
       remote: state.port,
     );
 
-    final ok = await _remoteBridge.connect(
-      config: SshConfigWrapper(config),
-      localPort: _tunnelPort,
-    );
+    bool ok;
+    try {
+      ok = await _remoteBridge.connect(
+        config: SshConfigWrapper(config),
+        localPort: _tunnelPort,
+      );
+    } catch (e) {
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.error,
+        message: '重连失败: $e',
+      );
+      return false;
+    }
+
     if (ok) {
       stateNotifier.value =
           state.copyWith(status: ConnStatus.connected, message: '远程已连接');
       return true;
     }
+
+    // 隧道已建立但 Gateway 无响应 — 尝试启动
+    if (_remoteExecutor.tunnelEstablished) {
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.connecting,
+        message: '正在启动远程 Gateway...',
+      );
+      await _startRemoteGateway();
+      for (var i = 0; i < 8; i++) {
+        await Future.delayed(const Duration(seconds: 1));
+        if (await checkLocal()) break;
+      }
+      if (await checkLocal()) {
+        stateNotifier.value =
+            state.copyWith(status: ConnStatus.connected, message: '远程已连接');
+        return true;
+      }
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.error,
+        message: _lastRemoteGatewayOutput.isNotEmpty ? '远程 Gateway 启动失败: $_lastRemoteGatewayOutput' : '重连失败: Gateway 无响应',
+      );
+      return false;
+    }
+
+    final errMsg = _remoteExecutor.lastError;
     stateNotifier.value = state.copyWith(
       status: ConnStatus.error,
-      message: '连接失败',
+      message: errMsg != null ? '重连失败: $errMsg' : '重连失败',
     );
     return false;
   }
@@ -409,38 +710,48 @@ class ConnectionManager {
   }
 
   Future<Map<String, dynamic>> getMachineStatus() async {
-    if (state.mode == ConnectionMode.embedded) {
+    switch (state.mode) {
+      case ConnectionMode.embedded:
+        return {
+          'cpu': 0.0,
+          'memory': {'used': 0, 'total': 0},
+          'disk': {'used': '0B', 'total': '0B'},
+          'uptime': 'embedded',
+        };
+      case ConnectionMode.local:
+      case ConnectionMode.remote: {
+        try {
+      final result = await runShell(r'''
+grep 'cpu ' /proc/stat | awk '{usage=($2+$4)*100/($2+$4+$5)} END {printf "CPU:%.1f\n"}'
+free -m | awk '/^Mem:/ {printf "MEM:%s|%s\n", $3, $2}'
+df -h / | awk 'NR==2 {printf "DISK:%s|%s\n", $3, $2}'
+uptime -p | awk '{printf "UPTIME:%s\n", $0}'
+''', allowFailure: true);
+      final out = result.stdout.trim().replaceAll('\r\n', '\n');
+      double cpu = 0.0;
+      int memUsed = 0, memTotal = 0;
+      String diskUsed = '', diskTotal = '';
+      String uptime = '';
+      for (final line in out.split('\n')) {
+        if (line.startsWith('CPU:')) {
+          cpu = double.tryParse(line.substring(4)) ?? 0.0;
+        } else if (line.startsWith('MEM:')) {
+          final parts = line.substring(4).split('|');
+          memUsed = int.tryParse(parts.first) ?? 0;
+          memTotal = int.tryParse(parts.last) ?? 0;
+        } else if (line.startsWith('DISK:')) {
+          final parts = line.substring(5).split('|');
+          diskUsed = parts.isNotEmpty ? parts.first : '';
+          diskTotal = parts.length > 1 ? parts.last : '';
+        } else if (line.startsWith('UPTIME:')) {
+          uptime = line.substring(7);
+        }
+      }
       return {
-        'cpu': 0.0,
-        'memory': {'used': 0, 'total': 0},
-        'disk': {'used': '0B', 'total': '0B'},
-        'uptime': 'embedded',
-      };
-    }
-    try {
-      final cpu = await runShell(
-        "grep 'cpu ' /proc/stat | awk '{usage=(\$2+\$4)*100/(\$2+\$4+\$5)} END {printf \"%.1f\", usage}'",
-        allowFailure: true,
-      );
-      final mem = await runShell(
-        "free -m | awk '/^Mem:/ {print \$3 \"|\" \$2}'",
-        allowFailure: true,
-      );
-      final disk = await runShell(
-        "df -h / | awk 'NR==2 {print \$3 \"|\" \$2}'",
-        allowFailure: true,
-      );
-      final uptime = await runShell('uptime -p', allowFailure: true);
-      final mParts = mem.stdout.trim().split('|');
-      final dParts = disk.stdout.trim().split('|');
-      return {
-        'cpu': double.tryParse(cpu.stdout) ?? 0.0,
-        'memory': {
-          'used': int.tryParse(mParts.first) ?? 0,
-          'total': int.tryParse(mParts.last) ?? 0,
-        },
-        'disk': {'used': dParts.first, 'total': dParts.last},
-        'uptime': uptime.stdout.trim(),
+        'cpu': cpu,
+        'memory': {'used': memUsed, 'total': memTotal},
+        'disk': {'used': diskUsed, 'total': diskTotal},
+        'uptime': uptime,
       };
     } catch (_) {
       return {
@@ -449,11 +760,19 @@ class ConnectionManager {
         'uptime': 'unknown'
       };
     }
+      }
+    }
   }
 
   Future<Map<String, int>> getTokenUsage() async => {'daily': 0, 'monthly': 0};
   Future<bool> checkAndSetup() async => checkLocal();
-  Future<bool> startLocalGateway() async => checkLocal();
+  Future<bool> startLocalGateway() async {
+    if (state.mode == ConnectionMode.remote && _remoteExecutor.tunnelEstablished) {
+      await _startRemoteGateway();
+      await Future.delayed(const Duration(seconds: 5));
+    }
+    return checkLocal();
+  }
 
   Future<String> downloadHermesBundle(
     String url, {
