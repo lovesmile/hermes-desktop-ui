@@ -160,6 +160,16 @@ class _CronScreenState extends State<CronScreen> {
     return hash.toRadixString(16);
   }
 
+  String? _extractJobId(String output) {
+    try {
+      final json = jsonDecode(output);
+      if (json is Map && json['id'] != null) return json['id'].toString();
+    } catch (_) {}
+    final m = RegExp(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+        .firstMatch(output);
+    return m?.group(0);
+  }
+
   // ── 系统 crontab 管理 ──────────────────────────────────────────
 
   Future<String> _readRawCrontab() async {
@@ -706,7 +716,23 @@ class _CronScreenState extends State<CronScreen> {
         throw Exception(out.isNotEmpty ? out : 'hermes cron create failed (exit ${cmdResult.exitCode})');
       }
 
-      await _loadJobs();
+      // 增量刷新：从输出中提取 job id 直接追加，避免远程文件延迟
+      final jobId = _extractJobId(out);
+      if (jobId != null && mounted) {
+        setState(() {
+          _jobs.insert(0, CronJob(
+            id: jobId,
+            name: name,
+            schedule: cronExpr,
+            prompt: prompt,
+            status: 'active',
+            createdAt: DateTime.now(),
+            skillNames: skills.isNotEmpty ? skills : null,
+          ));
+        });
+      } else {
+        await _loadJobs();
+      }
 
       if (mounted) {
         Navigator.pop(context);
@@ -718,7 +744,7 @@ class _CronScreenState extends State<CronScreen> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('创建失败: $e')),
+          SnackBar(content: Text('创建失败: $e'), backgroundColor: AppTheme.error),
         );
       }
     }
