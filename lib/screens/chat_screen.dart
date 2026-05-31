@@ -719,6 +719,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerLow,
         title: Text(_activeSession?.title ?? '新对话'),
         actions: [
           if (_activeSession != null)
