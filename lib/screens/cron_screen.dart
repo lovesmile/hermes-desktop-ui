@@ -22,6 +22,7 @@ class _CronScreenState extends State<CronScreen> {
   final _fileService = HermesFileService();
   List<CronJob> _jobs = [];
   List<CronJob> _systemJobs = [];
+  String _systemCrontabRaw = '';
   List<String> _skillsCache = [];
   bool _loading = true;
 
@@ -100,6 +101,7 @@ class _CronScreenState extends State<CronScreen> {
     try {
       final result = await _cm.runShell('crontab -l 2>/dev/null', allowFailure: true);
       final output = result.stdout;
+      _systemCrontabRaw = output;
       if (output.trim().isEmpty) return [];
 
       final jobs = <CronJob>[];
@@ -156,6 +158,209 @@ class _CronScreenState extends State<CronScreen> {
       hash = hash & hash;
     }
     return hash.toRadixString(16);
+  }
+
+  // ── 系统 crontab 管理 ──────────────────────────────────────────
+
+  Future<String> _readRawCrontab() async {
+    if (_cm.state.mode == ConnectionMode.embedded) return '';
+    final result = await _cm.runShell('crontab -l 2>/dev/null', allowFailure: true);
+    return result.stdout;
+  }
+
+  Future<void> _writeRawCrontab(String content) async {
+    final escaped = content.replaceAll("'", "'\\''");
+    await _cm.runShell(
+      "printf '%s' '$escaped' > /tmp/_hcron.tmp && crontab /tmp/_hcron.tmp && rm -f /tmp/_hcron.tmp",
+      allowFailure: true,
+    );
+  }
+
+  bool _isSystemJobPaused(CronJob job) {
+    final target = '${job.schedule} ${job.prompt}'.trim();
+    for (final line in _systemCrontabRaw.split('\n')) {
+      if (line.trim() == '#$target') return true;
+    }
+    return false;
+  }
+
+  Future<void> _toggleSystemJob(CronJob job) async {
+    try {
+      final raw = await _readRawCrontab();
+      final lines = raw.split('\n');
+      final target = '${job.schedule} ${job.prompt}'.trim();
+      bool modified = false;
+      final newLines = lines.map((line) {
+        if (modified) return line;
+        final trimmed = line.trim();
+        final isCommented = trimmed.startsWith('#');
+        final effective = isCommented ? trimmed.substring(1).trim() : trimmed;
+        if (effective == target) {
+          modified = true;
+          return isCommented ? line.replaceFirst('#', '') : '#$line';
+        }
+        return line;
+      }).toList();
+      if (!modified) throw Exception('未找到匹配的定时任务行');
+      await _writeRawCrontab(newLines.join('\n'));
+      _loadJobs();
+      if (mounted) {
+        final nowPaused = _isSystemJobPaused(job);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(nowPaused ? '已暂停 ${job.name}' : '已恢复 ${job.name}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('操作失败: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _runSystemJob(CronJob job) async {
+    try {
+      final result = await _cm.runShell(job.prompt, allowFailure: true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('命令已执行 (exit ${result.exitCode})')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('执行失败: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _editSystemJob(CronJob job) async {
+    final schedController = TextEditingController(text: job.schedule);
+    final cmdController = TextEditingController(text: job.prompt);
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('编辑系统定时任务'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: schedController,
+              decoration: const InputDecoration(
+                labelText: '执行时间 (cron 表达式)',
+                hintText: '0 9 * * *',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: cmdController,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: '命令',
+                isDense: true,
+                alignLabelWithHint: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, {
+              'schedule': schedController.text.trim(),
+              'command': cmdController.text.trim(),
+            }),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null || !mounted) return;
+    final newSched = result['schedule'] ?? '';
+    final newCmd = result['command'] ?? '';
+    if (newSched.isEmpty || newCmd.isEmpty) return;
+
+    try {
+      final raw = await _readRawCrontab();
+      final lines = raw.split('\n');
+      final target = '${job.schedule} ${job.prompt}'.trim();
+      final newLines = lines.map((line) {
+        final trimmed = line.trim();
+        if (trimmed == target || trimmed == '#$target') {
+          return '$newSched $newCmd';
+        }
+        return line;
+      }).toList();
+      await _writeRawCrontab(newLines.join('\n'));
+      _loadJobs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('任务已更新')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('更新失败: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteSystemJob(CronJob job) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要删除系统定时任务「${job.name}」吗？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.error),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final raw = await _readRawCrontab();
+      final lines = raw.split('\n');
+      final target = '${job.schedule} ${job.prompt}'.trim();
+      final newLines = <String>[];
+      bool found = false;
+      for (final line in lines) {
+        if (!found) {
+          final trimmed = line.trim();
+          if (trimmed == target || trimmed == '#$target') {
+            found = true;
+            continue;
+          }
+        }
+        newLines.add(line);
+      }
+      if (!found) throw Exception('未找到匹配的定时任务行');
+      await _writeRawCrontab(newLines.join('\n'));
+      _loadJobs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已删除 ${job.name}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('删除失败: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _prefetchSkills() async {
@@ -878,6 +1083,8 @@ class _CronScreenState extends State<CronScreen> {
   }
 
   Widget _buildSystemJobCard(CronJob job, ColorScheme cs) {
+    final paused = _isSystemJobPaused(job);
+    final statusColor = paused ? cs.onSurfaceVariant : AppTheme.success;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
@@ -887,44 +1094,67 @@ class _CronScreenState extends State<CronScreen> {
           children: [
             Row(
               children: [
-                Icon(Icons.computer, size: 14, color: cs.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(job.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    '系统',
-                    style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant, fontWeight: FontWeight.w500),
+                  width: 10, height: 10,
+                  decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(child: Text(job.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: paused ? cs.onSurfaceVariant.withValues(alpha: 0.12) : AppTheme.success.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          paused ? '已暂停' : '系统',
+                          style: TextStyle(fontSize: 10, color: paused ? cs.onSurfaceVariant : AppTheme.success, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 8),
                 Text(_describeSchedule(job), style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
               ],
             ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.terminal, size: 14, color: cs.onSurfaceVariant),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: SelectableText(job.prompt,
-                        style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: cs.onSurface)),
-                  ),
-                ],
-              ),
+            if (job.prompt.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              SelectableText(job.prompt,
+                  style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: cs.onSurfaceVariant)),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: () => _toggleSystemJob(job),
+                  icon: Icon(paused ? Icons.play_arrow : Icons.pause, size: 16),
+                  label: Text(paused ? '启用' : '暂停', style: const TextStyle(fontSize: 12)),
+                ),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: () => _runSystemJob(job),
+                  icon: const Icon(Icons.play_circle_outline, size: 16),
+                  label: const Text('立即执行', style: TextStyle(fontSize: 12)),
+                ),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: () => _editSystemJob(job),
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: const Text('编辑', style: TextStyle(fontSize: 12)),
+                ),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: () => _deleteSystemJob(job),
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('删除', style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(foregroundColor: AppTheme.error),
+                ),
+              ],
             ),
           ],
         ),
