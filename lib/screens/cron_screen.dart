@@ -21,6 +21,7 @@ class _CronScreenState extends State<CronScreen> {
   final _configService = ConfigService();
   final _fileService = HermesFileService();
   List<CronJob> _jobs = [];
+  List<CronJob> _systemJobs = [];
   List<String> _skillsCache = [];
   bool _loading = true;
 
@@ -87,10 +88,74 @@ class _CronScreenState extends State<CronScreen> {
     setState(() => _loading = true);
     try {
       final jobs = await _readJobsFromFile();
-      if (mounted) setState(() { _jobs = jobs; _loading = false; });
+      final systemJobs = await _readSystemCrontab();
+      if (mounted) setState(() { _jobs = jobs; _systemJobs = systemJobs; _loading = false; });
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<List<CronJob>> _readSystemCrontab() async {
+    if (_cm.state.mode == ConnectionMode.embedded) return [];
+    try {
+      final result = await _cm.runShell('crontab -l 2>/dev/null', allowFailure: true);
+      final output = result.stdout;
+      if (output.trim().isEmpty) return [];
+
+      final jobs = <CronJob>[];
+      for (final rawLine in output.split('\n')) {
+        final line = rawLine.trim();
+        if (line.isEmpty || line.startsWith('#') || line.startsWith('@reboot')) continue;
+        if (RegExp(r'^[A-Za-z_]\w*\s*=').hasMatch(line)) continue;
+
+        String schedule;
+        String command;
+        if (line.startsWith('@')) {
+          const aliasMap = {
+            '@hourly': '0 * * * *',
+            '@daily': '0 0 * * *',
+            '@weekly': '0 0 * * 0',
+            '@monthly': '0 0 1 * *',
+            '@yearly': '0 0 1 1 *',
+            '@annually': '0 0 1 1 *',
+          };
+          final alias = line.split(RegExp(r'\s+')).first;
+          final aliasSched = aliasMap[alias];
+          if (aliasSched == null) continue;
+          schedule = aliasSched;
+          command = line.substring(alias.length).trim();
+        } else {
+          final parts = line.split(RegExp(r'\s+'));
+          if (parts.length < 6) continue;
+          schedule = parts.take(5).join(' ');
+          command = parts.skip(5).join(' ');
+        }
+
+        if (command.isEmpty) continue;
+        final cmdDisplay = command.length > 50 ? '${command.substring(0, 50)}...' : command;
+        final id = 'sys_${_simpleHash('$schedule|$command')}';
+        jobs.add(CronJob(
+          id: id,
+          name: cmdDisplay,
+          schedule: schedule,
+          prompt: command,
+          status: 'active',
+          createdAt: DateTime.now(),
+        ));
+      }
+      return jobs;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  String _simpleHash(String input) {
+    int hash = 0;
+    for (final byte in utf8.encode(input)) {
+      hash = ((hash << 5) - hash) + byte;
+      hash = hash & hash;
+    }
+    return hash.toRadixString(16);
   }
 
   Future<void> _prefetchSkills() async {
@@ -762,6 +827,10 @@ class _CronScreenState extends State<CronScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final hasHermesJobs = _jobs.isNotEmpty;
+    final hasSystemJobs = _systemJobs.isNotEmpty;
+    final empty = !hasHermesJobs && !hasSystemJobs;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('定时任务'),
@@ -772,7 +841,7 @@ class _CronScreenState extends State<CronScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _jobs.isEmpty
+          : empty
               ? Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -783,11 +852,83 @@ class _CronScreenState extends State<CronScreen> {
                     ],
                   ),
                 )
-              : ListView.builder(
+              : ListView(
                   padding: const EdgeInsets.all(12),
-                  itemCount: _jobs.length,
-                  itemBuilder: (_, i) => _buildJobCard(_jobs[i], cs),
+                  children: [
+                    if (hasHermesJobs) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4, bottom: 8),
+                        child: Text('Hermes 定时任务',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
+                      ),
+                      ..._jobs.map((j) => _buildJobCard(j, cs)),
+                      if (hasSystemJobs) const SizedBox(height: 16),
+                    ],
+                    if (hasSystemJobs) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4, bottom: 8),
+                        child: Text('系统定时任务',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
+                      ),
+                      ..._systemJobs.map((j) => _buildSystemJobCard(j, cs)),
+                    ],
+                  ],
                 ),
+    );
+  }
+
+  Widget _buildSystemJobCard(CronJob job, ColorScheme cs) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.computer, size: 14, color: cs.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(job.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '系统',
+                    style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant, fontWeight: FontWeight.w500),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(_describeSchedule(job), style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.terminal, size: 14, color: cs.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: SelectableText(job.prompt,
+                        style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: cs.onSurface)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

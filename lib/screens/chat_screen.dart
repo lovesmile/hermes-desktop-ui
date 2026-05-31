@@ -976,9 +976,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               minLines: 1,
                               textInputAction: TextInputAction.send,
                               decoration: InputDecoration(
-                                hintText: _sending
-                                    ? 'AI 回复中...'
-                                    : '输入消息... / 加载技能\nEnter 发送 · Shift+Enter 换行',
+                                hintText: '输入消息... / 加载技能\nEnter 发送 · Shift+Enter 换行',
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
