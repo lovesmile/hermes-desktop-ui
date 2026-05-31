@@ -1076,10 +1076,47 @@ class _ChatScreenState extends State<ChatScreen> {
                 onTap: () => _selectSession(s),
                 onDelete: () => _deleteSession(s.id),
                 onTogglePin: () => _togglePin(s.id),
+                onSetRemark: () => _setSessionRemark(s.id),
               )),
         ],
       );
     }).toList();
+  }
+
+  Future<void> _setSessionRemark(String id) async {
+    final session = _sessions.firstWhere((s) => s.id == id);
+    final controller = TextEditingController(text: session.remark ?? '');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('设置备注'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '输入备注名称',
+            isDense: true,
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, ''), child: const Text('清除')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('保存')),
+        ],
+      ),
+    );
+    // null = cancelled, '' = clear, non-empty = set
+    if (result == null) return;
+    final remark = result.isNotEmpty ? result : null;
+    await _localDb.updateSessionRemark(id, remark);
+    _loadSessions();
+    // Also update active session if it's the same one
+    if (_activeSession?.id == id && mounted) {
+      setState(() {
+        _activeSession = _activeSession!.copyWith(remark: remark);
+      });
+    }
   }
 
   Future<void> _deleteSession(String id) async {
@@ -1353,6 +1390,7 @@ class _SessionItem extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onDelete;
   final VoidCallback onTogglePin;
+  final VoidCallback onSetRemark;
 
   const _SessionItem({
     required this.session,
@@ -1361,6 +1399,7 @@ class _SessionItem extends StatelessWidget {
     required this.onTap,
     required this.onDelete,
     required this.onTogglePin,
+    required this.onSetRemark,
   });
 
   @override
@@ -1415,7 +1454,7 @@ class _SessionItem extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          session.title,
+                          session.displayTitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -1427,6 +1466,18 @@ class _SessionItem extends StatelessWidget {
                                 selected ? FontWeight.w700 : FontWeight.w400,
                           ),
                         ),
+                        if (session.remark != null && session.remark!.isNotEmpty) ...[
+                          const SizedBox(height: 1),
+                          Text(
+                            session.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                         if (session.preview != null) ...[
                           SizedBox(height: 2),
                           Text(
@@ -1482,6 +1533,20 @@ class _SessionItem extends StatelessWidget {
             ),
           ),
           onTap: () => onTogglePin(),
+        ),
+        PopupMenuItem<String>(
+          value: 'remark',
+          child: SizedBox(
+            width: 180,
+            child: Row(
+              children: [
+                Icon(Icons.edit_outlined, size: 18, color: AppTheme.primary),
+                const SizedBox(width: 12),
+                Text(session.remark != null ? '编辑备注' : '设置备注'),
+              ],
+            ),
+          ),
+          onTap: () => onSetRemark(),
         ),
         const PopupMenuDivider(),
         PopupMenuItem<String>(

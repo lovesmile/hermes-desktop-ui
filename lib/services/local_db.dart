@@ -67,6 +67,7 @@ class LocalDatabase {
       list.add(Session(
         id: s['id'] as String? ?? entry.key,
         title: s['title'] as String? ?? '',
+        remark: s['remark'] as String?,
         source: s['source'] as String? ?? 'cli',
         createdAt: _parseDate(s['created_at']),
         updatedAt: _parseDate(s['updated_at']),
@@ -97,6 +98,7 @@ class LocalDatabase {
     return Session(
       id: s['id'] as String? ?? sessionId,
       title: s['title'] as String? ?? '',
+      remark: s['remark'] as String?,
       source: s['source'] as String? ?? 'cli',
       createdAt: _parseDate(s['created_at']),
       updatedAt: _parseDate(s['updated_at']),
@@ -164,6 +166,20 @@ class LocalDatabase {
           break;
         }
       }
+    }
+    await _write(db);
+  }
+
+  /// 设置会话备注
+  Future<void> updateSessionRemark(String sessionId, String? remark) async {
+    final db = await _read();
+    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
+    final session = sessionsMap[sessionId] as Map<String, dynamic>?;
+    if (session == null) return;
+    if (remark != null && remark.isNotEmpty) {
+      session['remark'] = remark;
+    } else {
+      session.remove('remark');
     }
     await _write(db);
   }

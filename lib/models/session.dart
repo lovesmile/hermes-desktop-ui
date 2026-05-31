@@ -1,15 +1,19 @@
 class Session {
   final String id;
   final String title;
+  final String? remark;
   final String source; // cli, telegram, discord, slack, etc.
   final DateTime createdAt;
   final DateTime updatedAt;
   final int messageCount;
   final String? preview;
 
+  String get displayTitle => remark ?? title;
+
   Session({
     required this.id,
     required this.title,
+    this.remark,
     required this.source,
     required this.createdAt,
     required this.updatedAt,
@@ -17,10 +21,24 @@ class Session {
     this.preview,
   });
 
+  Session copyWith({String? remark}) {
+    return Session(
+      id: id,
+      title: title,
+      remark: remark ?? this.remark,
+      source: source,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      messageCount: messageCount,
+      preview: preview,
+    );
+  }
+
   factory Session.fromJson(Map<String, dynamic> json) {
     return Session(
       id: json['id'] ?? '',
       title: json['title'] ?? json['name'] ?? '未命名会话',
+      remark: json['remark'] as String?,
       source: json['source'] ?? 'cli',
       createdAt: _parseDate(json['created_at'] ?? json['createdAt']),
       updatedAt: _parseDate(json['updated_at'] ?? json['updatedAt']),
@@ -32,6 +50,7 @@ class Session {
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
+        if (remark != null) 'remark': remark,
         'source': source,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
