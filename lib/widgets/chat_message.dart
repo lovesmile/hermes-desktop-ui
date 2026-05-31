@@ -194,11 +194,15 @@ class ChatMessageWidget extends StatelessWidget {
 
   String _formatTimestamp(DateTime dt) {
     final now = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inSeconds < 60) return '刚刚';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}分钟前';
-    if (diff.inHours < 24) return '${diff.inHours}小时前';
-    return '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    final today = DateTime(now.year, now.month, now.day);
+    final msgDate = DateTime(dt.year, dt.month, dt.day);
+    final time =
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    if (msgDate == today) return time;
+    final yesterday = today.subtract(const Duration(days: 1));
+    if (msgDate == yesterday) return '昨天 $time';
+    if (dt.year == now.year) return '${dt.month}/${dt.day} $time';
+    return '${dt.year}/${dt.month}/${dt.day} $time';
   }
 }
 

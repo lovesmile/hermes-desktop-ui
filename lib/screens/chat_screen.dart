@@ -310,6 +310,8 @@ class _ChatScreenState extends State<ChatScreen> {
         if (role == 'assistant' && (content == null || (content is String && content.isEmpty))) {
           continue;
         }
+        final tsStr = m['timestamp'] as String?;
+        final ts = tsStr != null ? DateTime.tryParse(tsStr) ?? DateTime.now() : DateTime.now();
         String text;
         if (content is String) {
           text = content;
@@ -325,7 +327,7 @@ class _ChatScreenState extends State<ChatScreen> {
         messages.add(_Message(
           text: text,
           isUser: role == 'user',
-          timestamp: DateTime.now(),
+          timestamp: ts,
         ));
       }
       // 写入缓存
@@ -854,7 +856,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           controller: _scrollController,
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           itemCount: _messages.length +
-                              (_streamingContent.isNotEmpty ? 1 : 0) +
+                              (_sending || _interrupted ? 1 : 0) +
                               (_messageHasMore ? 1 : 0),
                           itemBuilder: (context, i) {
                             // Loading more indicator at top
