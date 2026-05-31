@@ -659,8 +659,9 @@ class _ModelsScreenState extends State<ModelsScreen> {
     try {
       // 通过 ConfigService 读写，自动适配 local/embedded/remote 模式
       var config = await _configService.readConfig();
+      // model/default 都可能用作模型名
       config = config.replaceAll(
-          RegExp(r'^(\s+)default:.*$', multiLine: true), '  default: $model');
+          RegExp(r'^(\s+)(?:default|model):.*$', multiLine: true), '  default: $model');
       config = config.replaceAll(
           RegExp(r'^(\s+)provider:.*$', multiLine: true), '  provider: $provider');
       if (baseUrl.isNotEmpty) {
@@ -669,7 +670,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
       }
       // 兼容根级格式
       config = config.replaceAll(
-          RegExp(r'^default:.*$', multiLine: true), 'default: $model');
+          RegExp(r'^(?:default|model):.*$', multiLine: true), 'default: $model');
       config = config.replaceAll(
           RegExp(r'^provider:.*$', multiLine: true), 'provider: $provider');
       if (baseUrl.isNotEmpty) {
