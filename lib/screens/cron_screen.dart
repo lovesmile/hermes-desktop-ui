@@ -15,11 +15,12 @@ class CronScreen extends StatefulWidget {
   State<CronScreen> createState() => _CronScreenState();
 }
 
-class _CronScreenState extends State<CronScreen> {
+class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateMixin {
   final _cm = ConnectionManager();
   final _gateway = GatewayService();
   final _configService = ConfigService();
   final _fileService = HermesFileService();
+  late final TabController _tabController;
   List<CronJob> _jobs = [];
   List<CronJob> _systemJobs = [];
   String _systemCrontabRaw = '';
@@ -29,6 +30,7 @@ class _CronScreenState extends State<CronScreen> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     unawaited(_prefetchSkills());
     _loadJobs();
     GatewayService().refreshNotifier.addListener(_onModeChanged);
@@ -37,6 +39,7 @@ class _CronScreenState extends State<CronScreen> {
   @override
   void dispose() {
     GatewayService().refreshNotifier.removeListener(_onModeChanged);
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -358,8 +361,8 @@ class _CronScreenState extends State<CronScreen> {
       }
       if (!found) throw Exception('未找到匹配的定时任务行');
       await _writeRawCrontab(newLines.join('\n'));
-      _loadJobs();
       if (mounted) {
+        setState(() => _systemJobs.removeWhere((j) => j.id == job.id));
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('已删除 ${job.name}')),
         );
@@ -454,8 +457,8 @@ class _CronScreenState extends State<CronScreen> {
         if (result.exitCode != 0) {
           throw Exception(out.isNotEmpty ? out : 'hermes cron remove failed (exit ${result.exitCode})');
         }
-        _loadJobs();
         if (mounted) {
+          setState(() => _jobs.removeWhere((j) => j.id == job.id));
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('已删除 ${job.name}')),
           );
@@ -716,9 +719,9 @@ class _CronScreenState extends State<CronScreen> {
         throw Exception(out.isNotEmpty ? out : 'hermes cron create failed (exit ${cmdResult.exitCode})');
       }
 
-      // 增量刷新：从输出中提取 job id 直接追加，避免远程文件延迟
-      final jobId = _extractJobId(out);
-      if (jobId != null && mounted) {
+      // 增量刷新：从输出提取 job id，取不到用临时 id，始终不触发全量刷新
+      final jobId = _extractJobId(out) ?? 'new_${DateTime.now().millisecondsSinceEpoch}';
+      if (mounted) {
         setState(() {
           _jobs.insert(0, CronJob(
             id: jobId,
@@ -730,8 +733,6 @@ class _CronScreenState extends State<CronScreen> {
             skillNames: skills.isNotEmpty ? skills : null,
           ));
         });
-      } else {
-        await _loadJobs();
       }
 
       if (mounted) {
@@ -1078,13 +1079,20 @@ class _CronScreenState extends State<CronScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final hasHermesJobs = _jobs.isNotEmpty;
-    final hasSystemJobs = _systemJobs.isNotEmpty;
-    final empty = !hasHermesJobs && !hasSystemJobs;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('定时任务'),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'Hermes 定时任务'),
+            Tab(text: '系统定时任务'),
+          ],
+          labelColor: cs.primary,
+          unselectedLabelColor: cs.onSurfaceVariant,
+          indicatorColor: cs.primary,
+        ),
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadJobs, tooltip: '刷新'),
           IconButton(icon: const Icon(Icons.add), onPressed: _showAddJobDialog, tooltip: '添加任务'),
@@ -1092,49 +1100,65 @@ class _CronScreenState extends State<CronScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : empty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.schedule_outlined, size: 48, color: cs.onSurfaceVariant),
-                      const SizedBox(height: 16),
-                      Text('暂无定时任务', style: TextStyle(color: cs.onSurfaceVariant)),
-                    ],
-                  ),
-                )
-              : ListView(
-                  padding: const EdgeInsets.all(12),
-                  children: [
-                    if (hasHermesJobs) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(left: 4, bottom: 4),
-                        child: Text('Hermes 定时任务',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(left: 4, bottom: 8),
-                        child: Text('由 Hermes 管理的任务，支持完整的启用/暂停/编辑/删除操作',
-                            style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
-                      ),
-                      ..._jobs.map((j) => _buildJobCard(j, cs)),
-                      if (hasSystemJobs) const SizedBox(height: 16),
-                    ],
-                    if (hasSystemJobs) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(left: 4, bottom: 4),
-                        child: Text('系统定时任务',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(left: 4, bottom: 8),
-                        child: Text('系统 crontab 中的任务，通过注释/取消注释行来启停',
-                            style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
-                      ),
-                      ..._systemJobs.map((j) => _buildSystemJobCard(j, cs)),
-                    ],
-                  ],
-                ),
+          : TabBarView(
+              controller: _tabController,
+              children: [
+                _buildHermesTab(cs),
+                _buildSystemTab(cs),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildHermesTab(ColorScheme cs) {
+    if (_jobs.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.schedule_outlined, size: 48, color: cs.onSurfaceVariant),
+            const SizedBox(height: 16),
+            Text('暂无 Hermes 定时任务', style: TextStyle(color: cs.onSurfaceVariant)),
+          ],
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text('由 Hermes 管理的任务，支持完整的启用/暂停/编辑/删除操作',
+              style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+        ),
+        ..._jobs.map((j) => _buildJobCard(j, cs)),
+      ],
+    );
+  }
+
+  Widget _buildSystemTab(ColorScheme cs) {
+    if (_systemJobs.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.computer_outlined, size: 48, color: cs.onSurfaceVariant),
+            const SizedBox(height: 16),
+            Text('暂无系统定时任务', style: TextStyle(color: cs.onSurfaceVariant)),
+          ],
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text('系统 crontab 中的任务，通过注释/取消注释行来启停',
+              style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+        ),
+        ..._systemJobs.map((j) => _buildSystemJobCard(j, cs)),
+      ],
     );
   }
 

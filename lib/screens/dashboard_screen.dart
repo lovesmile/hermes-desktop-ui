@@ -31,6 +31,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _logSizeKb = 0;
   String _currentModel = '-';
   String _currentProvider = '-';
+  String _currentBaseUrl = '-';
 
   // 文件数 — 暂时禁用
   int _fileCount = 0;
@@ -116,6 +117,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           } else if (t.startsWith('provider:')) {
             final sep = t.indexOf(':');
             provider = t.substring(sep + 1).trim();
+          } else if (t.startsWith('base_url:') || t.startsWith('baseUrl:')) {
+            final sep = t.indexOf(':');
+            _currentBaseUrl = t.substring(sep + 1).trim();
           }
         }
         if (inCron && line.length - line.trimLeft().length > 0 && t.startsWith('- ')) {
@@ -304,7 +308,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 const SizedBox(height: 12),
                                 _infoRow('当前模型', _currentModel, cs),
                                 _infoRow('Provider', _currentProvider, cs),
-                                _infoRow('Gateway', _cm.gatewayUrl, cs),
+                                _infoRow('Base URL', _currentBaseUrl, cs),
                               ],
                             ),
                           ),
