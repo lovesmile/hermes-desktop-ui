@@ -1,6 +1,7 @@
 ﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
@@ -185,11 +186,32 @@ class ConnectionManager {
     }
   }
 
-  String _cronScript(String joined) =>
+  /// Shell 前缀：修正 PATH 并查找 hermes 二进制路径，结果存入 \$HERMES_BIN
+  static String get hermesBinShell =>
       'export PATH="\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH"; '
       'HERMES_BIN="\$(command -v hermes 2>/dev/null || true)"; '
-      'if [ -z "\$HERMES_BIN" ] && [ -x "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
-      'if [ -z "\$HERMES_BIN" ] && [ -f "\$HOME/.local/bin/hermes" ]; then HERMES_BIN="\$HOME/.local/bin/hermes"; fi; '
+      r'if [ -z "$HERMES_BIN" ] && [ -x "$HOME/.local/bin/hermes" ]; then '
+      r'  HERMES_BIN="$HOME/.local/bin/hermes"; '
+      r'fi; '
+      r'if [ -z "$HERMES_BIN" ] && [ -f "$HOME/.local/bin/hermes" ]; then '
+      r'  HERMES_BIN="$HOME/.local/bin/hermes"; '
+      r'fi; ';
+
+  /// Shell 命令：重启 Gateway 服务（优先 systemctl，回退 pkill + nohup）
+  /// 需先调用 [hermesBinShell] 设置 \$HERMES_BIN
+  static String get restartGatewayShell =>
+      r'if systemctl --user status hermes-gateway >/dev/null 2>&1; then '
+      r'  systemctl --user restart hermes-gateway; '
+      r'else '
+      r'  pkill -f "hermes gateway" 2>/dev/null || true; sleep 2; '
+      r'  if [ -n "$HERMES_BIN" ]; then '
+      r'    API_SERVER_ENABLED=true nohup "$HERMES_BIN" gateway run --replace '
+      r'      > ~/.hermes/logs/gateway.log 2>&1 & '
+      r'  fi; '
+      r'fi';
+
+  String _cronScript(String joined) =>
+      '${hermesBinShell}'
       'if [ -z "\$HERMES_BIN" ]; then echo "hermes command not found"; exit 127; fi; '
       '"\$HERMES_BIN" --accept-hooks cron $joined 2>&1';
 
@@ -260,10 +282,13 @@ class ConnectionManager {
   }
 
   Future<bool> checkLocal() async {
-    final configuredPort = state.port;
+    // 远程模式使用 SSH 隧道端口，其他模式用 state.port
+    final port = state.mode == ConnectionMode.remote && _tunnelPort > 0
+        ? _tunnelPort
+        : state.port;
 
     // 1. 尝试配置的端口
-    if (await _checkHealth(configuredPort)) {
+    if (await _checkHealth(port)) {
       stateNotifier.value =
           state.copyWith(status: ConnStatus.connected, message: '在线');
       return true;
@@ -272,7 +297,7 @@ class ConnectionManager {
     // 2. 本地模式：自动检测 WSL 中 Gateway 的实际端口
     if (state.mode == ConnectionMode.local && _wslBridge.isConnected) {
       final detectedPort = await _detectGatewayPort();
-      if (detectedPort != null && detectedPort != configuredPort) {
+      if (detectedPort != null && detectedPort != port) {
         final cfg = await ConfigService().readDesktopConfig();
         cfg['local_port'] = detectedPort;
         await ConfigService().writeDesktopConfig(cfg);
@@ -292,8 +317,8 @@ class ConnectionManager {
 
     // 3. 全部失败 → 显示可操作的错误提示
     final hint = state.mode == ConnectionMode.local
-        ? '连接失败 (端口 $configuredPort)，请确认 WSL 中已运行: hermes gateway run'
-        : '连接失败 (端口 $configuredPort)，请在设置中检查端口配置';
+        ? '连接失败 (端口 $port)，请确认 WSL 中已运行: hermes gateway run'
+        : '连接失败 (端口 $port)，请在设置中检查端口配置';
     stateNotifier.value = state.copyWith(
       status: ConnStatus.error,
       message: hint,
@@ -449,6 +474,44 @@ class ConnectionManager {
     }
 
     if (connected) {
+      // 同步 API_SERVER_KEY：读取远程 .env 中的 key 保存到本地配置
+      // 若 .env 无 key，用本地生成的 key 写入 .env
+      final keyResult = await runShell(
+        r"grep '^API_SERVER_KEY=' ~/.hermes/.env | head -1 | cut -d= -f2-",
+        allowFailure: true,
+      );
+      final remoteKey = keyResult.stdout.trim();
+
+      if (remoteKey.isNotEmpty) {
+        final dc2 = await ConfigService().readDesktopConfig();
+        dc2['api_key'] = remoteKey;
+        await ConfigService().writeDesktopConfig(dc2);
+        GatewayService().invalidateApiKey();
+        // 远程 .env 已有 key，保留不动
+      } else {
+        // 远程 .env 无 key → 用本地 key（自动生成）写入远程 .env 并重启 service
+        final localKey = await _ensureApiKey();
+        await runShell(
+          r"sed -i '/^API_SERVER_KEY=/d' ~/.hermes/.env 2>/dev/null; "
+          'echo "API_SERVER_KEY=$localKey" >> ~/.hermes/.env; '
+          '${hermesBinShell}'
+          '${restartGatewayShell}',
+          allowFailure: true,
+        );
+        // 等待 gateway 重启完成
+        for (var i = 0; i < 8; i++) {
+          await Future.delayed(const Duration(seconds: 1));
+          if (await checkLocal()) break;
+        }
+        if (!await checkLocal()) {
+          stateNotifier.value = state.copyWith(
+            status: ConnStatus.error,
+            message: '远程 Gateway 重启失败，请手动运行: systemctl --user restart hermes-gateway',
+          );
+          return false;
+        }
+      }
+
       final ns = remoteNamespaceOf(config);
       await _applyConnectionContext(namespace: ns, serverId: config.host);
       stateNotifier.value =
@@ -492,6 +555,7 @@ class ConnectionManager {
   Future<bool> _startRemoteGateway() async {
     // 读取远程 gateway 端口（与 SSH 隧道目标端口一致）
     final remotePort = state.port;
+    final apiKey = await _ensureApiKey();
 
     // 单次 SSH 连接：配置 .env + 尝试所有启动方式 + 等待端口就绪
     final setupCmd = r'''
@@ -499,7 +563,7 @@ class ConnectionManager {
 mkdir -p ~/.hermes
 touch ~/.hermes/.env
 sed -i '/^API_SERVER_ENABLED=/d' ~/.hermes/.env
-sed -i '/^API_SERVER_KEY=/d' ~/.hermes/.env
+echo "API_SERVER_KEY=__API_KEY__" >> ~/.hermes/.env
 echo "API_SERVER_ENABLED=true" >> ~/.hermes/.env
 echo "ENV_OK"
 
@@ -558,7 +622,8 @@ if [ -n "$HERMES_BIN" ]; then
 fi
 
 echo "NO_METHOD"
-'''.replaceAll('__REMOTE_PORT__', remotePort.toString());
+'''.replaceAll('__REMOTE_PORT__', remotePort.toString())
+      .replaceAll('__API_KEY__', apiKey);
 
     final setupResult = await runShell(setupCmd.trim(), allowFailure: true);
     _lastRemoteGatewayOutput = setupResult.stdout.trim().replaceAll('\r\n', '\n');
@@ -652,12 +717,38 @@ echo "NO_METHOD"
       port: localPort,
     );
     await _wslBridge.connect();
-    // 确保 WSL .env 不含 API_SERVER_KEY（兼容旧版本残留）
-    await _wslBridge.exec(
-      r"sed -i '/^API_SERVER_KEY=/d' ~/.hermes/.env 2>/dev/null || true",
-    );
+    // 写入 API_SERVER_KEY 后重启 WSL gateway，保证认证一致
+    final localApiKey = await _ensureApiKey();
+    final restartOk = await _wslBridge.exec(
+      '${hermesBinShell}'
+      r"sed -i '/^API_SERVER_KEY=/d' ~/.hermes/.env 2>/dev/null; "
+      'echo "API_SERVER_KEY=$localApiKey" >> ~/.hermes/.env; '
+      // 优先 systemd 管理，没有 systemd 时才用 pkill + nohup
+      r'if systemctl --user status hermes-gateway >/dev/null 2>&1; then '
+      r'  systemctl --user restart hermes-gateway; '
+      r'  echo "OK"; '
+      r'else '
+      r'  pkill -f "hermes gateway" 2>/dev/null || true;'
+      r'  sleep 2; '
+      r'  if [ -n "$HERMES_BIN" ]; then '
+      r'    API_SERVER_ENABLED=true nohup "$HERMES_BIN" gateway run --replace '
+      r'      > ~/.hermes/logs/gateway.log 2>&1 & '
+      r'    echo "OK"; '
+      r'  else '
+      r'    echo "NO_HERMES_BINARY"; '
+      r'  fi; '
+      r'fi',
+    ).then((r) => r.stdout.trim().contains('OK')).catchError((_) => false);
+    await Future.delayed(const Duration(seconds: 3));
+
     await _applyConnectionContext(namespace: 'local', serverId: 'local');
-    await checkLocal();
+    final healthy = await checkLocal();
+    if (!healthy || !restartOk) {
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.error,
+        message: restartOk ? '本地 Gateway 启动后无响应' : '本地 Gateway 重启失败：未找到 hermes 命令，请检查 WSL 中 hermes 是否安装',
+      );
+    }
   }
 
   Future<void> switchToEmbedded() async {
@@ -938,8 +1029,7 @@ echo "NO_METHOD"
   }) async {
     final tempDir = Directory.systemTemp.createTempSync();
     final dest = '${tempDir.path}/hermes.zip';
-    final client = HttpClient()
-      ..findProxy = findProxyFromEnvironment;
+    final client = HttpClient();
     final req = await client.getUrl(Uri.parse(url));
     final res = await req.close();
     final sink = File(dest).openWrite();
@@ -987,6 +1077,24 @@ echo "NO_METHOD"
       case ConnectionMode.local:
         return _wslBridge;
     }
+  }
+
+  /// 确保 desktop_config.json 中存在 api_key，不存在则自动生成
+  Future<String> _ensureApiKey() async {
+    final config = await ConfigService().readDesktopConfig();
+    var key = config['api_key'] as String?;
+    if (key == null || key.isEmpty) {
+      key = _generateRandomKey();
+      config['api_key'] = key;
+      await ConfigService().writeDesktopConfig(config);
+    }
+    GatewayService().invalidateApiKey();
+    return key;
+  }
+
+  String _generateRandomKey() {
+    final random = Random();
+    return List.generate(32, (_) => random.nextInt(16).toRadixString(16)).join();
   }
 }
 

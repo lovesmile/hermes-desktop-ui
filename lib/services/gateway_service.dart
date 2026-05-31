@@ -14,6 +14,7 @@ class GatewayService {
   factory GatewayService() => _instance;
   GatewayService._();
 
+  final _configService = ConfigService();
   String _baseUrl = ConfigService.defaultGatewayUrl;
   /// 当前使用的 Gateway URL
   String get baseUrl => _baseUrl;
@@ -33,6 +34,7 @@ class GatewayService {
     _serverId = id;
     _offline = false;
     _lastSessionId = null;
+    _cachedApiKey = null;
     _client.close(force: true);
     _client = HttpClient();
     _client.connectionTimeout = const Duration(seconds: 5);
@@ -56,6 +58,24 @@ class GatewayService {
     _client.connectionTimeout = const Duration(seconds: 5);
   }
 
+  /// 从桌面配置读取 API_SERVER_KEY（兼容旧版 gateway）
+  String? _cachedApiKey;
+  Future<String?> get _apiKey async {
+    if (_cachedApiKey != null) return _cachedApiKey;
+    final config = await _configService.readDesktopConfig();
+    _cachedApiKey = config['api_key'] as String?;
+    return _cachedApiKey;
+  }
+
+  void invalidateApiKey() => _cachedApiKey = null;
+
+  Future<void> _applyAuth(HttpClientRequest request) async {
+    final key = await _apiKey;
+    if (key != null && key.isNotEmpty) {
+      request.headers.set('Authorization', 'Bearer $key');
+    }
+  }
+
   // ═══════════════════════════════════════════
   //  Gateway 状态 (GET /api/status)
   // ═══════════════════════════════════════════
@@ -66,6 +86,7 @@ class GatewayService {
       final request = await _client
           .getUrl(Uri.parse('$_baseUrl/api/status'))
           .timeout(const Duration(seconds: 5));
+      await _applyAuth(request);
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
@@ -97,6 +118,7 @@ class GatewayService {
       final request = await _client.postUrl(uri);
       request.headers.set('Content-Type', 'application/json');
       request.headers.set('Accept', 'text/event-stream');
+      await _applyAuth(request);
 
       if (sessionId != null && sessionId.isNotEmpty) {
         request.headers.set('X-Hermes-Session-Id', sessionId);
@@ -288,16 +310,32 @@ class GatewayService {
   }
 
   /// 重启 Gateway 服务
+  /// - 内嵌模式：kill 进程，健康检查自动重启
+  /// - 本地/远程：通过系统命令重启（systemd → pkill + nohup）
   Future<bool> restartGateway() async {
-    try {
-      _resetClient();
-      final request = await _client
-          .postUrl(Uri.parse('$_baseUrl/gateway/restart'))
-          .timeout(const Duration(seconds: 5));
-      final response = await request.close();
-      return response.statusCode == 200;
-    } catch (_) {
-      return false;
+    final cm = ConnectionManager();
+    switch (cm.state.mode) {
+      case ConnectionMode.embedded:
+        try {
+          _resetClient();
+          final request = await _client
+              .postUrl(Uri.parse('$_baseUrl/gateway/restart'))
+              .timeout(const Duration(seconds: 5));
+          _applyAuth(request);
+          final response = await request.close();
+          return response.statusCode == 200;
+        } catch (_) {
+          return false;
+        }
+      case ConnectionMode.local:
+      case ConnectionMode.remote: {
+        final result = await cm.runShell(
+          '${ConnectionManager.hermesBinShell}'
+          '${ConnectionManager.restartGatewayShell}',
+          allowFailure: true,
+        );
+        return result.exitCode == 0;
+      }
     }
   }
 }

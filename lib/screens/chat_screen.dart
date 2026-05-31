@@ -655,7 +655,8 @@ class _ChatScreenState extends State<ChatScreen> {
           if (mounted) {
             setState(() {
               _messages.add(_Message(text: '⚠️ 发送失败: $e', isUser: false, timestamp: DateTime.now(), isError: true));
-              if (sessionIdAtSend == null) _sending = false;
+              _sending = false;
+              _streamingContent = '';
             });
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) _skillNode.requestFocus();
