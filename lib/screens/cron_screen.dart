@@ -514,12 +514,20 @@ class _CronScreenState extends State<CronScreen> {
                   ),
                   const SizedBox(height: 12),
                   if (scheduleType == '自定义')
-                    TextField(
-                      decoration: const InputDecoration(
-                        hintText: 'cron 表达式，如 0 9 * * 1',
-                        isDense: true,
-                      ),
-                      onChanged: (v) => setDialogState(() => customCronExpr = v),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextField(
+                          decoration: const InputDecoration(
+                            hintText: 'cron 表达式，如 0 9 * * 1',
+                            isDense: true,
+                          ),
+                          onChanged: (v) => setDialogState(() => customCronExpr = v),
+                        ),
+                        const SizedBox(height: 6),
+                        Text('分钟 小时 日期 月份 星期  （* = 任意, */N = 每N, 1-5 = 范围, 1,3,5 = 列表）',
+                            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                      ],
                     )
                   else
                     Row(
@@ -882,12 +890,20 @@ class _CronScreenState extends State<CronScreen> {
                   ),
                   const SizedBox(height: 12),
                   if (scheduleType == '自定义')
-                    TextField(
-                      decoration: const InputDecoration(
-                        hintText: 'cron 表达式，如 0 9 * * 1',
-                        isDense: true,
-                      ),
-                      onChanged: (v) => setDialogState(() => customCronExpr = v),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextField(
+                          decoration: const InputDecoration(
+                            hintText: 'cron 表达式，如 0 9 * * 1',
+                            isDense: true,
+                          ),
+                          onChanged: (v) => setDialogState(() => customCronExpr = v),
+                        ),
+                        const SizedBox(height: 6),
+                        Text('分钟 小时 日期 月份 星期  （* = 任意, */N = 每N, 1-5 = 范围, 1,3,5 = 列表）',
+                            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                      ],
                     )
                   else
                     Row(
