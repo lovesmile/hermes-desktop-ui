@@ -20,3 +20,10 @@ Thumbs.db
 
 # Hermes local
 .env
+
+# Claude Code
+.claude/
+
+# PyInstaller build artifacts
+dist/
+*.spec
