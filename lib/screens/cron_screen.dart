@@ -468,6 +468,7 @@ class _CronScreenState extends State<CronScreen> {
     int hour = 9;
     int minute = 0;
     int dayOfMonth = 1;
+    String customCronExpr = '';
     List<String> selectedSkills = [];
     if (_skillsCache.isEmpty) {
       await _prefetchSkills();
@@ -506,50 +507,46 @@ class _CronScreenState extends State<CronScreen> {
                   DropdownButtonFormField<String>(
                     value: scheduleType,
                     decoration: const InputDecoration(labelText: '执行时间', isDense: true),
-                    items: ['每天', '工作日', '每月', '自定义']
+                    items: ['每天', '工作日', '自定义']
                         .map((s) => DropdownMenuItem(value: s, child: Text(s)))
                         .toList(),
                     onChanged: (v) => setDialogState(() => scheduleType = v!),
                   ),
                   const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<int>(
-                          value: hour,
-                          decoration: const InputDecoration(labelText: '小时', isDense: true),
-                          items: List.generate(24, (i) => DropdownMenuItem(
-                            value: i, child: Text(i.toString().padLeft(2, '0')),
-                          )),
-                          onChanged: (v) => setDialogState(() => hour = v!),
-                        ),
+                  if (scheduleType == '自定义')
+                    TextField(
+                      decoration: const InputDecoration(
+                        hintText: 'cron 表达式，如 0 9 * * 1',
+                        isDense: true,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: DropdownButtonFormField<int>(
-                          value: minute,
-                          decoration: const InputDecoration(labelText: '分钟', isDense: true),
-                          items: List.generate(60, (i) => DropdownMenuItem(
-                            value: i, child: Text(i.toString().padLeft(2, '0')),
-                          )),
-                          onChanged: (v) => setDialogState(() => minute = v!),
+                      onChanged: (v) => setDialogState(() => customCronExpr = v),
+                    )
+                  else
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<int>(
+                            value: hour,
+                            decoration: const InputDecoration(labelText: '小时', isDense: true),
+                            items: List.generate(24, (i) => DropdownMenuItem(
+                              value: i, child: Text(i.toString().padLeft(2, '0')),
+                            )),
+                            onChanged: (v) => setDialogState(() => hour = v!),
+                          ),
                         ),
-                      ),
-                      if (scheduleType == '每月') ...[
                         const SizedBox(width: 12),
                         Expanded(
                           child: DropdownButtonFormField<int>(
-                            value: dayOfMonth,
-                            decoration: const InputDecoration(labelText: '日期', isDense: true),
-                            items: List.generate(28, (i) => DropdownMenuItem(
-                              value: i + 1, child: Text('${i + 1}日'),
+                            value: minute,
+                            decoration: const InputDecoration(labelText: '分钟', isDense: true),
+                            items: List.generate(60, (i) => DropdownMenuItem(
+                              value: i, child: Text(i.toString().padLeft(2, '0')),
                             )),
-                            onChanged: (v) => setDialogState(() => dayOfMonth = v!),
+                            onChanged: (v) => setDialogState(() => minute = v!),
                           ),
                         ),
                       ],
-                    ],
-                  ),
+                    ),
                   const SizedBox(height: 16),
                   const Text('技能选择', style: TextStyle(fontSize: 13)),
                   const SizedBox(height: 4),
@@ -636,6 +633,7 @@ class _CronScreenState extends State<CronScreen> {
                             'hour': hour,
                             'minute': minute,
                             'dayOfMonth': dayOfMonth,
+                            'customCron': customCronExpr,
                             'skills': selectedSkills,
                             'prompt': promptController.text.trim(),
                           };
@@ -679,7 +677,7 @@ class _CronScreenState extends State<CronScreen> {
       final cronExpr = switch (result['scheduleType'] as String) {
         '每天' => '${result['minute']} ${result['hour']} * * *',
         '工作日' => '${result['minute']} ${result['hour']} * * 1-5',
-        '每月' => '${result['minute']} ${result['hour']} ${result['dayOfMonth']} * *',
+        '自定义' => (result['customCron'] as String?)?.trim() ?? '',
         _ => '${result['minute']} ${result['hour']} * * *',
       };
 
@@ -727,10 +725,16 @@ class _CronScreenState extends State<CronScreen> {
     final minute = parts.length > 0 ? int.tryParse(parts[0]) ?? 0 : 0;
     final dayField = parts.length > 2 ? parts[2] : '*';
     String scheduleType;
-    if (dayField == '*') {
+    String customCronExpr;
+    if (parts.length < 5) {
+      scheduleType = '自定义';
+      customCronExpr = schedule;
+    } else if (dayField == '*') {
       scheduleType = parts.length > 4 && parts[4] == '1-5' ? '工作日' : '每天';
+      customCronExpr = '';
     } else {
-      scheduleType = '每月';
+      scheduleType = '自定义';
+      customCronExpr = schedule;
     }
     final dayOfMonth = int.tryParse(dayField) ?? 1;
 
@@ -740,7 +744,8 @@ class _CronScreenState extends State<CronScreen> {
       initialScheduleType: scheduleType,
       initialHour: hour,
       initialMinute: minute,
-      initialDayOfMonth: scheduleType == '每月' ? dayOfMonth : 1,
+      initialDayOfMonth: 1,
+      initialCustomCron: customCronExpr,
       initialSkills: job.skillNames ?? [],
     );
     if (result == null || !mounted) return;
@@ -769,7 +774,7 @@ class _CronScreenState extends State<CronScreen> {
       final cronExpr = switch (result['scheduleType'] as String) {
         '每天' => '${result['minute']} ${result['hour']} * * *',
         '工作日' => '${result['minute']} ${result['hour']} * * 1-5',
-        '每月' => '${result['minute']} ${result['hour']} ${result['dayOfMonth']} * *',
+        '自定义' => (result['customCron'] as String?)?.trim() ?? '',
         _ => '${result['minute']} ${result['hour']} * * *',
       };
 
@@ -821,6 +826,7 @@ class _CronScreenState extends State<CronScreen> {
     required int initialHour,
     required int initialMinute,
     required int initialDayOfMonth,
+    required String initialCustomCron,
     required List<String> initialSkills,
   }) async {
     if (_skillsCache.isEmpty) {
@@ -833,6 +839,7 @@ class _CronScreenState extends State<CronScreen> {
     int hour = initialHour;
     int minute = initialMinute;
     int dayOfMonth = initialDayOfMonth;
+    String customCronExpr = initialCustomCron;
     List<String> selectedSkills = List.from(initialSkills);
     final allSkills = List<String>.from(_skillsCache);
 
@@ -868,50 +875,46 @@ class _CronScreenState extends State<CronScreen> {
                   DropdownButtonFormField<String>(
                     value: scheduleType,
                     decoration: const InputDecoration(labelText: '执行时间', isDense: true),
-                    items: ['每天', '工作日', '每月', '自定义']
+                    items: ['每天', '工作日', '自定义']
                         .map((s) => DropdownMenuItem(value: s, child: Text(s)))
                         .toList(),
                     onChanged: (v) => setDialogState(() => scheduleType = v!),
                   ),
                   const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<int>(
-                          value: hour,
-                          decoration: const InputDecoration(labelText: '小时', isDense: true),
-                          items: List.generate(24, (i) => DropdownMenuItem(
-                            value: i, child: Text(i.toString().padLeft(2, '0')),
-                          )),
-                          onChanged: (v) => setDialogState(() => hour = v!),
-                        ),
+                  if (scheduleType == '自定义')
+                    TextField(
+                      decoration: const InputDecoration(
+                        hintText: 'cron 表达式，如 0 9 * * 1',
+                        isDense: true,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: DropdownButtonFormField<int>(
-                          value: minute,
-                          decoration: const InputDecoration(labelText: '分钟', isDense: true),
-                          items: List.generate(60, (i) => DropdownMenuItem(
-                            value: i, child: Text(i.toString().padLeft(2, '0')),
-                          )),
-                          onChanged: (v) => setDialogState(() => minute = v!),
+                      onChanged: (v) => setDialogState(() => customCronExpr = v),
+                    )
+                  else
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<int>(
+                            value: hour,
+                            decoration: const InputDecoration(labelText: '小时', isDense: true),
+                            items: List.generate(24, (i) => DropdownMenuItem(
+                              value: i, child: Text(i.toString().padLeft(2, '0')),
+                            )),
+                            onChanged: (v) => setDialogState(() => hour = v!),
+                          ),
                         ),
-                      ),
-                      if (scheduleType == '每月') ...[
                         const SizedBox(width: 12),
                         Expanded(
                           child: DropdownButtonFormField<int>(
-                            value: dayOfMonth,
-                            decoration: const InputDecoration(labelText: '日期', isDense: true),
-                            items: List.generate(28, (i) => DropdownMenuItem(
-                              value: i + 1, child: Text('${i + 1}日'),
+                            value: minute,
+                            decoration: const InputDecoration(labelText: '分钟', isDense: true),
+                            items: List.generate(60, (i) => DropdownMenuItem(
+                              value: i, child: Text(i.toString().padLeft(2, '0')),
                             )),
-                            onChanged: (v) => setDialogState(() => dayOfMonth = v!),
+                            onChanged: (v) => setDialogState(() => minute = v!),
                           ),
                         ),
                       ],
-                    ],
-                  ),
+                    ),
                   const SizedBox(height: 16),
                   const Text('技能选择', style: TextStyle(fontSize: 13)),
                   const SizedBox(height: 4),
@@ -998,6 +1001,7 @@ class _CronScreenState extends State<CronScreen> {
                             'hour': hour,
                             'minute': minute,
                             'dayOfMonth': dayOfMonth,
+                            'customCron': customCronExpr,
                             'skills': selectedSkills,
                             'prompt': promptController.text.trim(),
                           });
