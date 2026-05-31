@@ -38,6 +38,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _connectionMessage;
   bool? _connectionSuccess;
 
+  // Model config
+  Map<String, String> _modelConfig = {'model': '-', 'provider': '-', 'base_url': '-'};
+  String _hermesVersion = '-';
+
   @override
   void initState() {
     super.initState();
@@ -212,10 +216,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadConfig() async {
     setState(() => _loading = true);
     final content = await _configService.readConfig();
+    final modelCfg = await _configService.readModelConfig();
+    final version = await _detectHermesVersion();
     setState(() {
       _configContent = content;
+      _modelConfig = modelCfg;
+      _hermesVersion = version;
       _loading = false;
     });
+  }
+
+  /// 通过 CLI「hermes --version」获取真实版本号，适配三种模式
+  Future<String> _detectHermesVersion() async {
+    // 优先从 Gateway 状态获取（如果 gateway 返回了 version 字段）
+    try {
+      final status = await _gateway.getStatus();
+      final v = status['version'] as String?;
+      if (v != null && v.isNotEmpty) return v;
+    } catch (_) {}
+
+    final mode = _cm.state.mode;
+    if (mode == ConnectionMode.embedded) {
+      try {
+        final exePath = '${_cm.hermesBundlePath}\\hermes.exe';
+        if (await File(exePath).exists()) {
+          final r = await Process.run(exePath, ['--version']);
+          if (r.exitCode == 0) return (r.stdout as String).trim();
+        }
+        final r = await Process.run('hermes', ['--version']);
+        if (r.exitCode == 0) return (r.stdout as String).trim();
+      } catch (_) {}
+    } else if (_cm.state.status == ConnStatus.connected) {
+      final r = await _cm.runShell('hermes --version 2>/dev/null', allowFailure: true);
+      if (r.exitCode == 0) {
+        final v = r.stdout.trim();
+        if (v.isNotEmpty) return v;
+      }
+    }
+    return '-';
   }
 
   Future<void> _saveConfig(String content) async {
@@ -268,55 +306,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const SnackBar(content: Text('Gateway 地址已更新，重启应用后生效')),
                   );
                 }
-              }
-              Navigator.pop(ctx);
-              _loadConfig();
-            },
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showApiKeyEditor(String currentKey) {
-    final controller = TextEditingController(text: currentKey);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('API Key'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Gateway 的 API_SERVER_KEY，用于会话续传认证。\n需要与 ~/.hermes/.env 中设置的值一致。',
-                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                labelText: 'API Key',
-                hintText: 'Bearer token',
-                prefixIcon: Icon(Icons.key),
-              ),
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消')),
-          FilledButton(
-            onPressed: () async {
-              final key = controller.text.trim();
-              final config = await _configService.readDesktopConfig();
-              config['api_key'] = key;
-              await _configService.writeDesktopConfig(config);
-              _gateway.invalidateApiKey();
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('API Key 已保存')),
-                );
               }
               Navigator.pop(ctx);
               _loadConfig();
@@ -536,15 +525,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 // ── Model section ──
                 _buildSection('模型配置', [
-                  _buildSettingRow('当前模型', 'deepseek-v4-flash'),
-                  _buildSettingRow('Provider', 'deepseek'),
-                  _buildSettingRow('API 地址', 'https://api.deepseek.com'),
+                  _buildSettingRow('当前模型', _modelConfig['model'] ?? '-'),
+                  _buildSettingRow('Provider', _modelConfig['provider'] ?? '-'),
+                  _buildSettingRow('API 地址', _modelConfig['base_url'] ?? '-'),
                 ]),
                 SizedBox(height: 16),
 
                 // ── Display section ──
                 _buildSection('显示设置', [
                   _buildThemeToggle(),
+                  _buildThemeColorPicker(),
                   _buildSettingRow('UI 语言', '简体中文'),
                 ]),
                 SizedBox(height: 16),
@@ -599,26 +589,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         );
                       },
                     ),
-                    FutureBuilder<String>(
-                      future: _gateway.apiKey,
-                      builder: (context, snapshot) {
-                        final key = snapshot.data ?? '';
-                        final masked = key.isEmpty
-                            ? '未设置'
-                            : '${key.substring(0, 3)}****${key.length > 6 ? key.substring(key.length - 3) : ''}';
-                        return ListTile(
-                          title: Text('API Key',
-                              style: TextStyle(fontSize: 14)),
-                          subtitle: Text(masked,
-                              style: TextStyle(
-                                  fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                  fontFamily: 'monospace')),
-                          trailing: const Icon(Icons.edit_outlined, size: 20),
-                          onTap: () => _showApiKeyEditor(key),
-                          contentPadding: EdgeInsets.zero,
-                        );
-                      },
-                    ),
                     _buildSettingRow('超时时间', '30 分钟'),
                     _buildSettingRow('日志级别', 'INFO'),
                   ]),
@@ -651,7 +621,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // ── About ──
                 _buildSection('关于', [
                   _buildSettingRow('Hermes Desktop', 'v1.0.0'),
-                  _buildSettingRow('Hermes Agent', 'v2.x'),
+                  _buildSettingRow('Hermes Agent', _hermesVersion),
                   _buildSettingRow('项目地址',
                       'github.com/lovesmile/hermes-desktop-ui'),
                 ]),
@@ -725,9 +695,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final selected = _selectedMode == value;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: () async {
+      onTap: () {
         if (_selectedMode == value) return;
-        await _cm.disconnect();
         setState(() {
           _selectedMode = value;
           _connectionSuccess = null;
@@ -752,9 +721,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Radio<ConnectionMode>(
               value: value,
               groupValue: _selectedMode,
-              onChanged: (v) async {
+              onChanged: (v) {
                 if (_selectedMode == v) return;
-                await _cm.disconnect();
                 setState(() {
                   _selectedMode = v!;
                   _connectionSuccess = null;
@@ -1073,7 +1041,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       const Divider(height: 16),
       // Version info
-      _buildSettingRow('版本信息', 'Hermes Agent v2.x'),
+      _buildSettingRow('版本信息', _hermesVersion),
       const Divider(height: 16),
       // Control buttons
       ValueListenableBuilder<ConnectionInfo>(
@@ -1189,7 +1157,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Switch(
             value: themeModeNotifier.value,
             onChanged: (_) => themeModeNotifier.toggle(),
-            activeColor: AppTheme.primary,
+            activeColor: Theme.of(context).colorScheme.primary,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildThemeColorPicker() {
+    final cs = Theme.of(context).colorScheme;
+    final currentIdx = themeColorNotifier.value;
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('主题色',
+              style: TextStyle(fontSize: 14, color: cs.onSurface)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: List.generate(AppTheme.seedColors.length, (i) {
+              final selected = i == currentIdx;
+              return Tooltip(
+                message: AppTheme.themeNames[i],
+                preferBelow: false,
+                child: GestureDetector(
+                onTap: () async {
+                  themeColorNotifier.value = i;
+                  final cfg = await _configService.readDesktopConfig();
+                  cfg['theme_color'] = i;
+                  await _configService.writeDesktopConfig(cfg);
+                },
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: AppTheme.seedColors[i],
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: selected ? Colors.white : cs.outlineVariant,
+                      width: selected ? 3 : 1.5,
+                    ),
+                    boxShadow: selected
+                        ? [BoxShadow(color: Colors.white.withValues(alpha: 0.5), blurRadius: 6)]
+                        : null,
+                  ),
+                  child: selected
+                      ? Icon(Icons.check, size: 18, color: Colors.white)
+                      : null,
+                ),
+              ),
+              );
+            }),
           ),
         ],
       ),

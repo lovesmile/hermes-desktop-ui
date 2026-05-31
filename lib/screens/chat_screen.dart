@@ -268,14 +268,6 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  List<Session> get _filteredSessions {
-    final q = _searchController.text.trim().toLowerCase();
-    if (q.isEmpty) return _displayedSessions;
-    setState(() => _sessionHasMore = false);
-    return _sessions
-        .where((s) => s.title.toLowerCase().contains(q))
-        .toList();
-  }
   Future<void> _loadSkills() async {
     try {
       final skills = await _configService.getSkills();
@@ -722,29 +714,6 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Map<String, List<Session>> get _groupedSessions {
-    final groups = <String, List<Session>>{};
-    // 置顶的排在最前面
-    final pinned = <Session>[];
-    final unpinned = <Session>[];
-    for (final s in _filteredSessions) {
-      if (_pinnedSessionIds.contains(s.id)) {
-        pinned.add(s);
-      } else {
-        unpinned.add(s);
-      }
-    }
-    if (pinned.isNotEmpty) {
-      groups['pin'] = pinned;
-    }
-    if (unpinned.isNotEmpty) {
-      for (final s in unpinned) {
-        groups.putIfAbsent(s.source, () => []).add(s);
-      }
-    }
-    return groups;
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -810,7 +779,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           : ListView(
                               controller: _sessionScrollController,
                               children: [
-                                ..._buildSessionGroups(),
+                                ..._buildSessionList(),
                                 if (_loadingMore)
                                   Padding(
                                     padding: EdgeInsets.all(12),
@@ -1032,55 +1001,47 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  List<Widget> _buildSessionGroups() {
-    final groups = _groupedSessions;
-    final sourceLabels = {
-      'cli': '终端',
-      'telegram': 'Telegram',
-      'discord': 'Discord',
-      'slack': 'Slack',
-    };
+  /// 扁平会话列表 — 只显示 Desktop 本机会话（source == cli），无分组
+  List<Widget> _buildSessionList() {
+    final cs = Theme.of(context).colorScheme;
+    final q = _searchController.text.trim().toLowerCase();
 
-    return groups.entries.map((entry) {
-      final isPin = entry.key == 'pin';
-      final label = isPin ? '📌 置顶' : (sourceLabels[entry.key] ?? entry.key);
-      final sessions = entry.value;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(16, isPin ? 4 : 8, 16, 4),
-            child: Row(
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 1,
-                  ),
-                ),
-                Spacer(),
-                Text(
-                  '${sessions.length}',
-                  style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                ),
-              ],
+    List<Session> sessions;
+    if (q.isEmpty) {
+      sessions = _displayedSessions.where((s) => s.source == 'cli').toList();
+    } else {
+      // 搜索时忽略分页，全量搜索
+      sessions = _sessions
+          .where((s) => s.source == 'cli' && s.title.toLowerCase().contains(q))
+          .toList();
+    }
+
+    // 已置顶的排前面
+    sessions.sort((a, b) {
+      final aPinned = _pinnedSessionIds.contains(a.id);
+      final bPinned = _pinnedSessionIds.contains(b.id);
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+      return 0;
+    });
+    return sessions.isEmpty
+        ? [
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text('暂无会话', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+              ),
             ),
-          ),
-          ...sessions.map((s) => _SessionItem(
-                session: s,
-                selected: _activeSession?.id == s.id,
-                pinned: _pinnedSessionIds.contains(s.id),
-                onTap: () => _selectSession(s),
-                onDelete: () => _deleteSession(s.id),
-                onTogglePin: () => _togglePin(s.id),
-                onSetRemark: () => _setSessionRemark(s.id),
-              )),
-        ],
-      );
-    }).toList();
+          ]
+        : sessions.map((s) => _SessionItem(
+              session: s,
+              selected: _activeSession?.id == s.id,
+              pinned: _pinnedSessionIds.contains(s.id),
+              onTap: () => _selectSession(s),
+              onDelete: () => _deleteSession(s.id),
+              onTogglePin: () => _togglePin(s.id),
+              onSetRemark: () => _setSessionRemark(s.id),
+            )).toList();
   }
 
   Future<void> _setSessionRemark(String id) async {
@@ -1139,6 +1100,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _loadSessions();
     }
   }
+
 
   List<Map<String, String>> get _filteredSkills {
     if (_skillFilter.isEmpty) return _skills;

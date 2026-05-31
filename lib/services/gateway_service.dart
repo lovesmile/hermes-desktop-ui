@@ -14,7 +14,6 @@ class GatewayService {
   factory GatewayService() => _instance;
   GatewayService._();
 
-  final _configService = ConfigService();
   String _baseUrl = ConfigService.defaultGatewayUrl;
   /// 当前使用的 Gateway URL
   String get baseUrl => _baseUrl;
@@ -32,8 +31,6 @@ class GatewayService {
   /// 设置服务器标识并刷新数据
   void setServerId(String id) {
     _serverId = id;
-    // 清除所有缓存
-    _apiKey = null;
     _offline = false;
     _lastSessionId = null;
     _client.close(force: true);
@@ -48,15 +45,6 @@ class GatewayService {
   /// 最后创建的会话的 session ID（发第一条消息后设置）
   String? get lastSessionId => _lastSessionId;
 
-  /// 当前正在用的 API Key（从桌面配置读取）
-  String? _apiKey;
-  Future<String> get apiKey async {
-    if (_apiKey != null) return _apiKey!;
-    final config = await _configService.readDesktopConfig();
-    _apiKey = config['api_key'] as String?;
-    return _apiKey ?? '';
-  }
-
   /// 从 ConnectionManager 刷新 Gateway URL
   Future<void> refreshBaseUrl() async {
     _baseUrl = ConnectionManager().gatewayUrl;
@@ -66,14 +54,6 @@ class GatewayService {
     _client.close(force: true);
     _client = HttpClient();
     _client.connectionTimeout = const Duration(seconds: 5);
-  }
-
-  /// 在请求上添加认证头（如果配置了 API Key）
-  Future<void> _applyAuth(HttpClientRequest request) async {
-    final key = await apiKey;
-    if (key != null && key.isNotEmpty) {
-      request.headers.set('Authorization', 'Bearer $key');
-    }
   }
 
   // ═══════════════════════════════════════════
@@ -86,7 +66,7 @@ class GatewayService {
       final request = await _client
           .getUrl(Uri.parse('$_baseUrl/api/status'))
           .timeout(const Duration(seconds: 5));
-      await _applyAuth(request);
+
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
       final json = jsonDecode(body);
@@ -117,7 +97,7 @@ class GatewayService {
       final request = await _client.postUrl(uri);
       request.headers.set('Content-Type', 'application/json');
       request.headers.set('Accept', 'text/event-stream');
-      await _applyAuth(request);
+
       if (sessionId != null && sessionId.isNotEmpty) {
         request.headers.set('X-Hermes-Session-Id', sessionId);
       }
@@ -307,11 +287,6 @@ class GatewayService {
     }
   }
 
-  /// 清除缓存的 API Key（当设置页修改后调用）
-  void invalidateApiKey() {
-    _apiKey = null;
-  }
-
   /// 重启 Gateway 服务
   Future<bool> restartGateway() async {
     try {
@@ -319,7 +294,6 @@ class GatewayService {
       final request = await _client
           .postUrl(Uri.parse('$_baseUrl/gateway/restart'))
           .timeout(const Duration(seconds: 5));
-      _applyAuth(request);
       final response = await request.close();
       return response.statusCode == 200;
     } catch (_) {

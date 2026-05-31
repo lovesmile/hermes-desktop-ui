@@ -33,8 +33,13 @@ jobs:
       - name: Build Hermes standalone exe
         shell: pwsh
         run: |
-          pip install hermes-agent==0.14.0 pyinstaller
+          pip install hermes-agent pyinstaller
           pyinstaller --onefile --name hermes scripts/run_hermes.py
+
+      - name: Bundle Hermes for embedded mode
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/hermes.exe -DestinationPath hermes-bundle-windows.zip -Force
 
       - name: Build all-in-one installer
         shell: pwsh
@@ -52,7 +57,7 @@ jobs:
         with:
           files: |
             installer/HermesDesktop-Setup-*.exe
-            dist/hermes.exe
+            hermes-bundle-windows.zip
           body: |
             # Hermes Desktop ${{ github.ref_name }}
 
@@ -62,8 +67,7 @@ jobs:
             下载安装包，双击安装，打开即用。内置 Hermes Agent，无需额外配置。
 
             ## 手动部署
-            - [hermes_desktop.exe](hermes-desktop-ui-windows-${{ github.ref_name }}.zip)
-            - [hermes.exe（Hermes Agent）](hermes-bundle-windows-${{ github.ref_name }}.zip)
+            - 从 Release Assets 下载 `hermes-bundle-windows.zip`，解压到 `%USERPROFILE%\\.hermes-desktop\\hermes\\`
 
             ## 从源码构建
             ```bash

@@ -62,11 +62,20 @@ class _HermesDesktopAppState extends State<HermesDesktopApp> {
   void initState() {
     super.initState();
     themeModeNotifier.addListener(_onThemeChanged);
+    themeColorNotifier.addListener(_onThemeChanged);
+    _loadThemeColor();
+  }
+
+  Future<void> _loadThemeColor() async {
+    final config = await ConfigService().readDesktopConfig();
+    final saved = config['theme_color'] as int? ?? 0;
+    themeColorNotifier.value = saved.clamp(0, AppTheme.seedColors.length - 1);
   }
 
   @override
   void dispose() {
     themeModeNotifier.removeListener(_onThemeChanged);
+    themeColorNotifier.removeListener(_onThemeChanged);
     super.dispose();
   }
 

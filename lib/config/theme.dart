@@ -4,18 +4,39 @@ import 'package:flutter/material.dart';
 /// References: https://m3.material.io/
 class AppTheme {
   // ── Seed colors ──────────────────────────────────────────────
-  static const Color _seedColor = Color(0xFF2563EB); // 科技蓝 — 匹配 logo
+  static const Color _defaultSeed = Color(0xFF2563EB); // 科技蓝 — 默认
   static const Color _errorColor = Color(0xFFB3261E);
+
+  /// 可选主题色列表（与 themeNames 一一对应）
+  static const List<Color> seedColors = [
+    Color(0xFF2563EB), // 科技蓝
+    Color(0xFF10B981), // 翡翠绿
+    Color(0xFF7C3AED), // 罗兰紫
+    Color(0xFFE11D48), // 玫瑰红
+    Color(0xFFF97316), // 暖橙
+    Color(0xFF06B6D4), // 青色
+  ];
+
+  /// 主题色名称（与 seedColors 一一对应）
+  static const List<String> themeNames = [
+    '科技蓝', '翡翠绿', '罗兰紫', '玫瑰红', '暖橙', '青色',
+  ];
+
+  static Color _currentSeed() {
+    final idx = themeColorNotifier.value;
+    if (idx >= 0 && idx < seedColors.length) return seedColors[idx];
+    return _defaultSeed;
+  }
 
   // ── Dynamic color scheme from seed ────────────────────────────
   static ColorScheme _lightScheme() => ColorScheme.fromSeed(
-        seedColor: _seedColor,
+        seedColor: _currentSeed(),
         brightness: Brightness.light,
         error: _errorColor,
       );
 
   static ColorScheme _darkScheme() => ColorScheme.fromSeed(
-        seedColor: _seedColor,
+        seedColor: _currentSeed(),
         brightness: Brightness.dark,
         error: _errorColor,
       );
@@ -33,7 +54,7 @@ class AppTheme {
   );
 
   // ── Convenient color accessors (backward compat) ──────────────
-  static Color get primary => _seedColor;
+  static Color get primary => _currentSeed();
   static Color get secondary => const Color(0xFF475569);
   static Color get tertiary => const Color(0xFFD97706);
   static Color get error => _errorColor;
@@ -248,3 +269,10 @@ class ThemeModeNotifier extends ValueNotifier<bool> {
 }
 
 final themeModeNotifier = ThemeModeNotifier();
+
+/// Theme color index notifier (global, selects from AppTheme.seedColors)
+class ThemeColorNotifier extends ValueNotifier<int> {
+  ThemeColorNotifier() : super(0);
+}
+
+final themeColorNotifier = ThemeColorNotifier();

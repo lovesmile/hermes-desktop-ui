@@ -110,12 +110,16 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
       final jobs = <CronJob>[];
       for (final rawLine in output.split('\n')) {
         final line = rawLine.trim();
-        if (line.isEmpty || line.startsWith('#') || line.startsWith('@reboot')) continue;
+        if (line.isEmpty || line.startsWith('@reboot')) continue;
         if (RegExp(r'^[A-Za-z_]\w*\s*=').hasMatch(line)) continue;
+
+        // 解析可能被 # 暂停的任务行
+        final isPaused = line.startsWith('#');
+        final effective = isPaused ? line.substring(1).trim() : line;
 
         String schedule;
         String command;
-        if (line.startsWith('@')) {
+        if (effective.startsWith('@')) {
           const aliasMap = {
             '@hourly': '0 * * * *',
             '@daily': '0 0 * * *',
@@ -124,14 +128,14 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
             '@yearly': '0 0 1 1 *',
             '@annually': '0 0 1 1 *',
           };
-          final alias = line.split(RegExp(r'\s+')).first;
+          final alias = effective.split(RegExp(r'\s+')).first;
           final aliasSched = aliasMap[alias];
           if (aliasSched == null) continue;
           schedule = aliasSched;
-          command = line.substring(alias.length).trim();
+          command = effective.substring(alias.length).trim();
         } else {
-          final parts = line.split(RegExp(r'\s+'));
-          if (parts.length < 6) continue;
+          final parts = effective.split(RegExp(r'\s+'));
+          if (parts.length < 6) continue; // 不是 cron 行，跳过（普通注释）
           schedule = parts.take(5).join(' ');
           command = parts.skip(5).join(' ');
         }
@@ -144,7 +148,7 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
           name: cmdDisplay,
           schedule: schedule,
           prompt: command,
-          status: 'active',
+          status: isPaused ? 'paused' : 'active',
           createdAt: DateTime.now(),
         ));
       }
@@ -215,10 +219,25 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
         return line;
       }).toList();
       if (!modified) throw Exception('未找到匹配的定时任务行');
-      await _writeRawCrontab(newLines.join('\n'));
-      _loadJobs();
+      final newCrontab = newLines.join('\n');
+      await _writeRawCrontab(newCrontab);
+      _systemCrontabRaw = newCrontab;
       if (mounted) {
         final nowPaused = _isSystemJobPaused(job);
+        setState(() {
+          final idx = _systemJobs.indexWhere((j) => j.id == job.id);
+          if (idx >= 0) {
+            final old = _systemJobs[idx];
+            _systemJobs[idx] = CronJob(
+              id: old.id,
+              name: old.name,
+              schedule: old.schedule,
+              prompt: old.prompt,
+              status: nowPaused ? 'paused' : 'active',
+              createdAt: old.createdAt,
+            );
+          }
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(nowPaused ? '已暂停 ${job.name}' : '已恢复 ${job.name}')),
         );
@@ -309,9 +328,24 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
         }
         return line;
       }).toList();
-      await _writeRawCrontab(newLines.join('\n'));
-      _loadJobs();
+      final newCrontab = newLines.join('\n');
+      await _writeRawCrontab(newCrontab);
+      _systemCrontabRaw = newCrontab;
       if (mounted) {
+        setState(() {
+          final idx = _systemJobs.indexWhere((j) => j.id == job.id);
+          if (idx >= 0) {
+            final old = _systemJobs[idx];
+            _systemJobs[idx] = CronJob(
+              id: old.id,
+              name: newCmd.length > 50 ? '${newCmd.substring(0, 50)}...' : newCmd,
+              schedule: newSched,
+              prompt: newCmd,
+              status: old.status,
+              createdAt: old.createdAt,
+            );
+          }
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('任务已更新')),
         );
@@ -401,8 +435,22 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
       if (result.exitCode != 0) {
         throw Exception(out.isNotEmpty ? out : 'hermes cron $cmd failed (exit ${result.exitCode})');
       }
-      _loadJobs();
       if (mounted) {
+        setState(() {
+          final idx = _jobs.indexWhere((j) => j.id == job.id);
+          if (idx >= 0) {
+            final old = _jobs[idx];
+            _jobs[idx] = CronJob(
+              id: old.id,
+              name: old.name,
+              schedule: old.schedule,
+              prompt: old.prompt,
+              status: job.isActive ? 'paused' : 'active',
+              createdAt: old.createdAt,
+              skillNames: old.skillNames,
+            );
+          }
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(job.isActive ? '已暂停 ${job.name}' : '已恢复 ${job.name}')),
         );
@@ -837,8 +885,22 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
         throw Exception(out.isNotEmpty ? out : 'hermes cron edit failed (exit ${cmdResult.exitCode})');
       }
 
-      await _loadJobs();
       if (mounted) {
+        setState(() {
+          final idx = _jobs.indexWhere((j) => j.id == job.id);
+          if (idx >= 0) {
+            final old = _jobs[idx];
+            _jobs[idx] = CronJob(
+              id: old.id,
+              name: newName,
+              schedule: cronExpr,
+              prompt: newPrompt,
+              status: old.status,
+              createdAt: old.createdAt,
+              skillNames: skills.isNotEmpty ? skills : null,
+            );
+          }
+        });
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('任务已更新')),

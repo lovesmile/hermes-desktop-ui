@@ -217,6 +217,38 @@ class ConfigService {
   Future<({String config, List<Map<String, String>> skills})> readConfigAndSkills() async =>
       HermesFileService().readConfigAndSkills();
 
+  /// 解析模型配置（model / provider / base_url），供仪表盘和设置页复用
+  Future<Map<String, String>> readModelConfig() async {
+    final config = await readConfig();
+    String model = '-';
+    String provider = '-';
+    String baseUrl = '-';
+    String? currentSection;
+    for (final line in config.split('\n')) {
+      final t = line.trim();
+      if (t.isEmpty || t.startsWith('#')) continue;
+      if (line.length - line.trimLeft().length == 0 && t.endsWith(':') && !t.startsWith('-')) {
+        currentSection = t.substring(0, t.length - 1);
+        continue;
+      }
+      if (currentSection == 'model' && line.length - line.trimLeft().length > 0) {
+        if (t.startsWith('default:')) {
+          model = t.substring(t.indexOf(':') + 1).trim();
+        } else if (t.startsWith('provider:')) {
+          provider = t.substring(t.indexOf(':') + 1).trim();
+        } else if (t.startsWith('base_url:') || t.startsWith('baseUrl:')) {
+          baseUrl = t.substring(t.indexOf(':') + 1).trim();
+        }
+      }
+      // 根级 base_url 兼容
+      if (line.length - line.trimLeft().length == 0 &&
+          (t.startsWith('base_url:') || t.startsWith('baseUrl:')) && baseUrl == '-') {
+        baseUrl = t.substring(t.indexOf(':') + 1).trim();
+      }
+    }
+    return {'model': model, 'provider': provider, 'base_url': baseUrl};
+  }
+
   Future<String> getLogContent(String source, {int lines = 200}) async {
     switch (ConnectionManager().state.mode) {
       case ConnectionMode.embedded:

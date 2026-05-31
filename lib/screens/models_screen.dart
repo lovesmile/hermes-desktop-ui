@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/config_service.dart';
@@ -456,7 +454,6 @@ class _ModelsScreenState extends State<ModelsScreen> {
     String selectedProvider = _modelConfig['provider'] ?? 'deepseek';
     String selectedModel = _modelConfig['model'] ?? 'deepseek-v4-flash';
     String baseUrl = _modelConfig['base_url'] ?? providerBaseUrls[selectedProvider] ?? '';
-    String apiKey = '';
     bool showCustomModel = false; // 是否显示自定义模型输入
 
     final baseUrlCtrl = TextEditingController(text: baseUrl);
@@ -594,7 +591,6 @@ class _ModelsScreenState extends State<ModelsScreen> {
                         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         hintText: '新的 API Key（存 ~/.hermes/.env）',
                       ),
-                      onChanged: (v) => apiKey = v,
                     ),
                     const SizedBox(height: 12),
 
@@ -661,55 +657,52 @@ class _ModelsScreenState extends State<ModelsScreen> {
       return;
     }
     try {
-      final hermesHome = ConfigService.resolveHermesHome();
-      // 写 config.yaml
-      final file = File('$hermesHome/config.yaml');
-      if (await file.exists()) {
-        var content = await file.readAsString();
-        content = content.replaceAll(RegExp(r'^(\s+)default:.*$', multiLine: true), '  default: $model');
-        content = content.replaceAll(RegExp(r'^(\s+)provider:.*$', multiLine: true), '  provider: $provider');
-        if (baseUrl.isNotEmpty) {
-          content = content.replaceAll(RegExp(r'^(\s+)base_url:.*$', multiLine: true), '  base_url: $baseUrl');
-        }
-        // 也兼容根级格式
-        content = content.replaceAll(RegExp(r'^default:.*$', multiLine: true), 'default: $model');
-        content = content.replaceAll(RegExp(r'^provider:.*$', multiLine: true), 'provider: $provider');
-        if (baseUrl.isNotEmpty) {
-          content = content.replaceAll(RegExp(r'^base_url:.*$', multiLine: true), 'base_url: $baseUrl');
-        }
-        await file.writeAsString(content);
+      // 通过 ConfigService 读写，自动适配 local/embedded/remote 模式
+      var config = await _configService.readConfig();
+      config = config.replaceAll(
+          RegExp(r'^(\s+)default:.*$', multiLine: true), '  default: $model');
+      config = config.replaceAll(
+          RegExp(r'^(\s+)provider:.*$', multiLine: true), '  provider: $provider');
+      if (baseUrl.isNotEmpty) {
+        config = config.replaceAll(
+            RegExp(r'^(\s+)base_url:.*$', multiLine: true), '  base_url: $baseUrl');
       }
+      // 兼容根级格式
+      config = config.replaceAll(
+          RegExp(r'^default:.*$', multiLine: true), 'default: $model');
+      config = config.replaceAll(
+          RegExp(r'^provider:.*$', multiLine: true), 'provider: $provider');
+      if (baseUrl.isNotEmpty) {
+        config = config.replaceAll(
+            RegExp(r'^base_url:.*$', multiLine: true), 'base_url: $baseUrl');
+      }
+      await _configService.writeConfig(config);
 
       // 写 .env（API Key + Base URL 的环境变量）
       if (apiKey.isNotEmpty) {
-        final envFile = File('$hermesHome/.env');
-        if (await envFile.exists()) {
-          var envContent = await envFile.readAsString();
-          final providerUpper = provider.toUpperCase();
-          // 替换或追加 Provider_API_KEY
-          final keyVar = '${providerUpper}_API_KEY';
-          if (envContent.contains('$keyVar=')) {
+        var envContent = await _configService.readEnvFile();
+        final providerUpper = provider.toUpperCase();
+        final keyVar = '${providerUpper}_API_KEY';
+        if (envContent.contains('$keyVar=')) {
+          envContent = envContent.replaceAll(
+            RegExp('^$keyVar=.*' r'$', multiLine: true),
+            '$keyVar=$apiKey',
+          );
+        } else {
+          envContent += '\n$keyVar=$apiKey\n';
+        }
+        if (baseUrl.isNotEmpty) {
+          final urlVar = '${providerUpper}_BASE_URL';
+          if (envContent.contains('$urlVar=')) {
             envContent = envContent.replaceAll(
-              RegExp('^$keyVar=.*' r'$', multiLine: true),
-              '$keyVar=$apiKey',
+              RegExp('^$urlVar=.*' r'$', multiLine: true),
+              '$urlVar=$baseUrl',
             );
           } else {
-            envContent += '\n$keyVar=$apiKey\n';
+            envContent += '\n$urlVar=$baseUrl\n';
           }
-          // 替换或追加 Provider_BASE_URL
-          if (baseUrl.isNotEmpty) {
-            final urlVar = '${providerUpper}_BASE_URL';
-            if (envContent.contains('$urlVar=')) {
-              envContent = envContent.replaceAll(
-                RegExp('^$urlVar=.*' r'$', multiLine: true),
-                '$urlVar=$baseUrl',
-              );
-            } else {
-              envContent += '\n$urlVar=$baseUrl\n';
-            }
-          }
-          await envFile.writeAsString(envContent);
         }
+        await _configService.writeEnvFile(envContent);
       }
 
       if (mounted) {

@@ -95,51 +95,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // 解析 home 路径
       final homePath = await _fileService.resolveHermesHome();
 
-      // 定时任务数 — 从 config.yaml 解析 cron 段
-      int cronCount = 0;
-      final config = await _configService.readConfig();
-      String model = '-';
-      String provider = '-';
-      bool inCron = false;
-      String? currentSection;
-      for (final line in config.split('\n')) {
-        final t = line.trim();
-        if (t.isEmpty || t.startsWith('#')) continue;
-        if (line.length - line.trimLeft().length == 0 && t.endsWith(':') && !t.startsWith('-')) {
-          currentSection = t.substring(0, t.length - 1);
-          inCron = (currentSection == 'cron');
-          continue;
-        }
-        if (currentSection == 'model' && !inCron && line.length - line.trimLeft().length > 0) {
-          if (t.startsWith('default:')) {
-            final sep = t.indexOf(':');
-            model = t.substring(sep + 1).trim();
-          } else if (t.startsWith('provider:')) {
-            final sep = t.indexOf(':');
-            provider = t.substring(sep + 1).trim();
-          } else if (t.startsWith('base_url:') || t.startsWith('baseUrl:')) {
-            final sep = t.indexOf(':');
-            _currentBaseUrl = t.substring(sep + 1).trim();
-          }
-        }
-        if (inCron && line.length - line.trimLeft().length > 0 && t.startsWith('- ')) {
-          cronCount++;
-        }
-      }
+      // 模型配置 — 复用 ConfigService 解析，不重复实现
+      final modelCfg = await _configService.readModelConfig();
+      final model = modelCfg['model'] ?? '-';
+      final provider = modelCfg['provider'] ?? '-';
+      _currentBaseUrl = modelCfg['base_url'] ?? '-';
 
-      // 从 cron/jobs.json 获取定时任务数（fallback）
-      if (cronCount == 0) {
-        try {
-          final hermesHome = await _fileService.resolveHermesHome();
-          final content = await _fileService.readText('$hermesHome/cron/jobs.json');
-          if (content.isNotEmpty) {
-            final json = jsonDecode(content);
-            if (json is Map && json['jobs'] is List) {
-              cronCount = (json['jobs'] as List).length;
-            }
-          }
-        } catch (_) {}
-      }
+      // 定时任务数 — 从 cron/jobs.json 取 Hermes 任务 + crontab 系统任务
+      int cronCount = 0;
+      try {
+        final hermesHome = await _fileService.resolveHermesHome();
+        final content = await _fileService.readText('$hermesHome/cron/jobs.json');
+        if (content.isNotEmpty) {
+          final json = jsonDecode(content);
+          if (json is Map && json['jobs'] is List) cronCount = (json['jobs'] as List).length;
+        }
+      } catch (_) {}
+      // 加系统 crontab 任务数（含暂停的 # 行，用 -E 兼容所有环境）
+      final sysCron = await _cm.runShell(
+        "crontab -l 2>/dev/null | grep -cE '^#?[[:space:]]*[0-9*@]' || true",
+        allowFailure: true,
+      );
+      cronCount += int.tryParse(sysCron.stdout.trim()) ?? 0;
 
       // 获取机器状态
       final machineStatus = await _cm.getMachineStatus();

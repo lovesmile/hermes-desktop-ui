@@ -41,7 +41,6 @@ class _SetupScreenState extends State<SetupScreen> {
   // --- Local install state
 
   // --- LLM Config state
-  final _apiKeyCtrl = TextEditingController(text: 'hermes-desktop-dev-key');
   String _selectedProvider = 'deepseek';
   String _selectedModel = 'deepseek-v4-flash';
   final _providerApiKeyCtrl = TextEditingController(text: '');
@@ -52,7 +51,6 @@ class _SetupScreenState extends State<SetupScreen> {
     _portCtrl.dispose();
     _userCtrl.dispose();
     _passwordCtrl.dispose();
-    _apiKeyCtrl.dispose();
     _providerApiKeyCtrl.dispose();
     super.dispose();
   }
@@ -317,51 +315,45 @@ class _SetupScreenState extends State<SetupScreen> {
     });
 
     try {
-      await ConfigService().writeDesktopConfig({
-        ...await ConfigService().readDesktopConfig(),
-        'api_key': _apiKeyCtrl.text.trim(),
-      });
+      await ConfigService().writeDesktopConfig(
+        {...await ConfigService().readDesktopConfig()},
+      );
 
-      final hermesHome = ConfigService.resolveHermesHome();
-      final configFile = File('$hermesHome/config.yaml');
-      if (await configFile.exists()) {
-        var content = await configFile.readAsString();
-        content = content.replaceAll(
-          RegExp(r'^(\s+)default:.*$', multiLine: true),
-          '  default: $_selectedModel');
-        content = content.replaceAll(
-          RegExp(r'^(\s+)provider:.*$', multiLine: true),
-          '  provider: $_selectedProvider');
-        await configFile.writeAsString(content);
-      }
+      final configService = ConfigService();
+      // 通过 ConfigService 读写，自动适配 local/embedded/remote 模式
+      var config = await configService.readConfig();
+      config = config.replaceAll(
+        RegExp(r'^(\s+)default:.*$', multiLine: true),
+        '  default: $_selectedModel');
+      config = config.replaceAll(
+        RegExp(r'^(\s+)provider:.*$', multiLine: true),
+        '  provider: $_selectedProvider');
+      await configService.writeConfig(config);
 
       if (_providerApiKeyCtrl.text.trim().isNotEmpty) {
-        final envFile = File('$hermesHome/.env');
-        if (await envFile.exists()) {
-          var envContent = await envFile.readAsString();
-          final providerUpper = _selectedProvider.toUpperCase();
-          final keyVar = '${providerUpper}_API_KEY';
-          if (envContent.contains('$keyVar=')) {
-            envContent = envContent.replaceAll(
-              RegExp('^$keyVar=.*' r'$', multiLine: true),
-              '$keyVar=${_providerApiKeyCtrl.text.trim()}',
-            );
-          } else {
-            envContent += '\n$keyVar=${_providerApiKeyCtrl.text.trim()}\n';
-          }
-          final baseUrl = ms.providerBaseUrls[_selectedProvider] ?? '';
-          if (baseUrl.isNotEmpty) {
-            final urlVar = '${providerUpper}_BASE_URL';
-            if (envContent.contains('$urlVar=')) {
-              envContent = envContent.replaceAll(
-                RegExp('^$urlVar=.*' r'$', multiLine: true),
-                '$urlVar=$baseUrl');
-            } else {
-              envContent += '\n$urlVar=$baseUrl\n';
-            }
-          }
-          await envFile.writeAsString(envContent);
+        var envContent = await configService.readEnvFile();
+        final providerUpper = _selectedProvider.toUpperCase();
+        final keyVar = '${providerUpper}_API_KEY';
+        if (envContent.contains('$keyVar=')) {
+          envContent = envContent.replaceAll(
+            RegExp('^$keyVar=.*' r'$', multiLine: true),
+            '$keyVar=${_providerApiKeyCtrl.text.trim()}',
+          );
+        } else {
+          envContent += '\n$keyVar=${_providerApiKeyCtrl.text.trim()}\n';
         }
+        final baseUrl = ms.providerBaseUrls[_selectedProvider] ?? '';
+        if (baseUrl.isNotEmpty) {
+          final urlVar = '${providerUpper}_BASE_URL';
+          if (envContent.contains('$urlVar=')) {
+            envContent = envContent.replaceAll(
+              RegExp('^$urlVar=.*' r'$', multiLine: true),
+              '$urlVar=$baseUrl');
+          } else {
+            envContent += '\n$urlVar=$baseUrl\n';
+          }
+        }
+        await configService.writeEnvFile(envContent);
       }
 
       if (!mounted) return;
@@ -429,18 +421,6 @@ class _SetupScreenState extends State<SetupScreen> {
               ),
         ),
         const SizedBox(height: 24),
-
-        // API Key for Gateway
-        TextField(
-          controller: _apiKeyCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Gateway API Key',
-            hintText: '与 .env 中 API_SERVER_KEY 一致',
-            prefixIcon: Icon(Icons.key, size: 18),
-            isDense: true,
-          ),
-        ),
-        const SizedBox(height: 16),
 
         // Provider
         Text('模型提供商', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
