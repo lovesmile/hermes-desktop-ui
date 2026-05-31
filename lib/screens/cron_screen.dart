@@ -1062,18 +1062,28 @@ class _CronScreenState extends State<CronScreen> {
                   children: [
                     if (hasHermesJobs) ...[
                       Padding(
-                        padding: const EdgeInsets.only(left: 4, bottom: 8),
+                        padding: const EdgeInsets.only(left: 4, bottom: 4),
                         child: Text('Hermes 定时任务',
                             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4, bottom: 8),
+                        child: Text('由 Hermes 管理的任务，支持完整的启用/暂停/编辑/删除操作',
+                            style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
                       ),
                       ..._jobs.map((j) => _buildJobCard(j, cs)),
                       if (hasSystemJobs) const SizedBox(height: 16),
                     ],
                     if (hasSystemJobs) ...[
                       Padding(
-                        padding: const EdgeInsets.only(left: 4, bottom: 8),
+                        padding: const EdgeInsets.only(left: 4, bottom: 4),
                         child: Text('系统定时任务',
                             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4, bottom: 8),
+                        child: Text('系统 crontab 中的任务，通过注释/取消注释行来启停',
+                            style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
                       ),
                       ..._systemJobs.map((j) => _buildSystemJobCard(j, cs)),
                     ],
