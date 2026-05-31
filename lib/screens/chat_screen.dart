@@ -609,6 +609,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 _streamingContent = '';
                 _sending = false;
               });
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _skillNode.requestFocus();
+              });
             }
           } else if (sessionIdAtSend != null && response.isNotEmpty) {
             // ── 已有会话：存 AI 回复 ──
@@ -643,6 +646,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   _sending = false;
                 }
               });
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _skillNode.requestFocus();
+              });
             }
           }
         },
@@ -656,6 +662,9 @@ class _ChatScreenState extends State<ChatScreen> {
             setState(() {
               _messages.add(_Message(text: '⚠️ 发送失败: $e', isUser: false, timestamp: DateTime.now(), isError: true));
               if (sessionIdAtSend == null) _sending = false;
+            });
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _skillNode.requestFocus();
             });
           }
         },
@@ -1182,38 +1191,57 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // 「正在思考」状态指示器 — 脉冲动画
+  // 「正在思考」状态指示器 — 伪装成接收到的 AI 消息
   Widget _buildThinkingIndicator() {
-    final cs = Theme.of(context).colorScheme;
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // AI 头像
+          // AI 头像（与 ChatMessageWidget 一致）
           Container(
-            width: 28,
-            height: 28,
+            width: 32, height: 32,
             decoration: BoxDecoration(
-              color: AppTheme.primary.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(6),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF2563EB), Color(0xFF60A5FA)],
+              ),
+              borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(Icons.auto_awesome, size: 16, color: AppTheme.primary),
+            child: const Center(
+              child: Text('H',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14)),
+            ),
           ),
-          SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Hermes',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: cs.onSurfaceVariant)),
-                SizedBox(height: 6),
-                // 脉冲点动画
-                _AnimatedDots(),
-              ],
+          const SizedBox(width: 10),
+          // 消息气泡（与 ChatMessageWidget 一致）
+          Flexible(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 700),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(14),
+                  topRight: Radius.circular(14),
+                  bottomLeft: Radius.circular(4),
+                  bottomRight: Radius.circular(14),
+                ),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('正在思考',
+                      style: TextStyle(
+                          fontSize: 14, color: scheme.onSurface)),
+                  const SizedBox(width: 8),
+                  _AnimatedDots(),
+                ],
+              ),
             ),
           ),
         ],
