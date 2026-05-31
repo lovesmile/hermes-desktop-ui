@@ -342,7 +342,7 @@ class MainShellState extends State<MainShell> {
                           String label;
                           switch (conn.status) {
                             case ConnStatus.connected:
-                              dotColor = Colors.green;
+                              dotColor = AppTheme.success;
                               if (conn.mode == ConnectionMode.remote) {
                                 final parts = conn.message.split('已连接 ');
                                 final remotePart = parts.length > 1 ? parts.last : conn.message;
@@ -354,15 +354,15 @@ class MainShellState extends State<MainShell> {
                               }
                               break;
                             case ConnStatus.connecting:
-                              dotColor = Colors.orange;
+                              dotColor = AppTheme.warning;
                               label = '连接中...';
                               break;
                             case ConnStatus.disconnected:
-                              dotColor = Colors.red;
+                              dotColor = s.error;
                               label = '未连接';
                               break;
                             case ConnStatus.error:
-                              dotColor = Colors.red;
+                              dotColor = s.error;
                               label = conn.message.isNotEmpty ? conn.message : '未连接';
                               break;
                           }
