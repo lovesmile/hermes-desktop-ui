@@ -286,6 +286,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 _infoRow('当前模型', _currentModel, cs),
                                 _infoRow('Provider', _currentProvider, cs),
                                 _infoRow('Base URL', _currentBaseUrl, cs),
+                                if (_currentModel == '-' && _cm.state.mode == ConnectionMode.embedded) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.info_outline, size: 14, color: AppTheme.warning),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          '未读取到模型配置，请在「模型与技能」页配置后重启 Gateway',
+                                          style: TextStyle(fontSize: 12, color: AppTheme.warning),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ],
                             ),
                           ),

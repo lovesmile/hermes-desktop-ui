@@ -78,6 +78,9 @@ class ConnectionManager {
   // 最后一条远程 Gateway 启动命令的输出（用于错误展示）
   String _lastRemoteGatewayOutput = '';
 
+  // 内嵌 Gateway 启动时的 stderr（用于诊断启动失败原因）
+  String _lastEmbeddedStderr = '';
+
   /// SSH 隧道本地端口（与远程 gateway 端口不同，避免冲突）
   int _tunnelPort = 0;
 
@@ -86,6 +89,7 @@ class ConnectionManager {
   late final EmbeddedBridge _embeddedBridge =
       EmbeddedBridge(bundlePath: hermesBundlePath);
   Process? _embeddedGatewayProcess;
+  bool _embeddedGatewayExited = false;
 
   static const String defaultHermesDownloadUrl =
       'https://github.com/lovesmile/hermes-desktop-ui/releases/latest/download/hermes-bundle-windows.zip';
@@ -100,26 +104,42 @@ class ConnectionManager {
     await ConfigService.ensureInitialized();
     final config = await ConfigService().readDesktopConfig();
 
-    _wslDistro = config['wsl_distro'] ?? 'Ubuntu';
-    _wslBridge.setDistro(_wslDistro);
-
     final modeStr = config['connection_mode'] as String? ?? 'local';
     final mode = modeStr == 'remote'
         ? ConnectionMode.remote
         : (modeStr == 'embedded' ? ConnectionMode.embedded : ConnectionMode.local);
-    final port = config['local_port'] ?? 8642;
-    final ssh = config.containsKey('ssh_config')
-        ? SshConfig.fromJson(config['ssh_config'])
-        : const SshConfig();
+
+    // 从 mode 命名空间读取配置，避免跨模式污染
+    int port;
+    SshConfig ssh;
+    switch (mode) {
+      case ConnectionMode.local: {
+        final localCfg = (config['local'] as Map?) ?? {};
+        _wslDistro = (localCfg['wsl_distro'] as String?) ?? 'Ubuntu';
+        port = (localCfg['gateway_port'] as int?) ?? 8642;
+        ssh = const SshConfig();
+        break;
+      }
+      case ConnectionMode.remote: {
+        final remoteCfg = (config['remote'] as Map?) ?? {};
+        port = (remoteCfg['gateway_port'] as int?) ?? 8642;
+        ssh = SshConfig(
+          host: remoteCfg['ssh_host'] as String? ?? '',
+          port: remoteCfg['ssh_port'] as int? ?? 22,
+          user: remoteCfg['ssh_user'] as String? ?? '',
+          keyPath: remoteCfg['ssh_key_path'] as String?,
+          password: remoteCfg['ssh_password'] as String?,
+        );
+        break;
+      }
+      case ConnectionMode.embedded:
+        port = 8642;
+        ssh = const SshConfig();
+    }
+    _wslBridge.setDistro(_wslDistro);
 
     stateNotifier.value =
         ConnectionInfo(status: ConnStatus.connecting, mode: mode, port: port);
-
-    // 确保首次启动检查所需的字段存在
-    if (!config.containsKey('gateway_url')) {
-      config['gateway_url'] = ConnectionManager().gatewayUrl;
-    }
-    await ConfigService().writeDesktopConfig(config);
 
     _startHealthCheck();
     if (mode == ConnectionMode.remote) {
@@ -299,7 +319,8 @@ class ConnectionManager {
       final detectedPort = await _detectGatewayPort();
       if (detectedPort != null && detectedPort != port) {
         final cfg = await ConfigService().readDesktopConfig();
-        cfg['local_port'] = detectedPort;
+        cfg['local'] ??= <String, dynamic>{};
+        (cfg['local'] as Map<String, dynamic>)['gateway_port'] = detectedPort;
         await ConfigService().writeDesktopConfig(cfg);
         stateNotifier.value = state.copyWith(
           port: detectedPort,
@@ -368,8 +389,8 @@ class ConnectionManager {
     if ((config.password == null || config.password!.isEmpty) &&
         config.keyPath != null && config.keyPath!.isNotEmpty) {
       if (await File(config.keyPath!).exists()) return config;
-      final pw = ((await ConfigService().readDesktopConfig())['ssh_config']
-              as Map?)?['password'] as String?;
+      final pw = ((await ConfigService().readDesktopConfig())['remote']
+              as Map?)?['ssh_password'] as String?;
       if (pw != null && pw.isNotEmpty) config = config.copyWith(password: pw);
       else return config;
     }
@@ -422,13 +443,13 @@ class ConnectionManager {
 
       // 保存配置，保留密码用于密钥文件丢失后的恢复
       final dc = await ConfigService().readDesktopConfig();
-      dc['ssh_config'] = {
-        'host': config.host,
-        'port': config.port,
-        'user': config.user,
-        'keyPath': keyPath,
-        'password': config.password,
-      };
+      dc['remote'] ??= <String, dynamic>{};
+      final remote = dc['remote'] as Map<String, dynamic>;
+      remote['ssh_host'] = config.host;
+      remote['ssh_port'] = config.port;
+      remote['ssh_user'] = config.user;
+      remote['ssh_key_path'] = keyPath;
+      remote['ssh_password'] = config.password;
       await ConfigService().writeDesktopConfig(dc);
 
       return config.copyWith(keyPath: keyPath, password: null);
@@ -442,7 +463,8 @@ class ConnectionManager {
 
     // 从配置文件读取最新 gateway 端口，避免 state.port 过期
     final desktopConfig = await ConfigService().readDesktopConfig();
-    final remoteGatewayPort = desktopConfig['local_port'] as int? ?? 8642;
+    final remoteCfg = (desktopConfig['remote'] as Map?) ?? {};
+    final remoteGatewayPort = (remoteCfg['gateway_port'] as int?) ?? 8642;
 
     stateNotifier.value = state.copyWith(
       status: ConnStatus.connecting,
@@ -708,7 +730,8 @@ echo "NO_METHOD"
 
   Future<void> switchToLocal() async {
     final desktopConfig = await ConfigService().readDesktopConfig();
-    final localPort = desktopConfig['local_port'] as int? ?? 8642;
+    final localCfg = (desktopConfig['local'] as Map?) ?? {};
+    final localPort = (localCfg['gateway_port'] as int?) ?? 8642;
     await disconnect();
     stateNotifier.value = state.copyWith(
       mode: ConnectionMode.local,
@@ -752,23 +775,17 @@ echo "NO_METHOD"
   }
 
   Future<void> switchToEmbedded() async {
-    final desktopConfig = await ConfigService().readDesktopConfig();
-    final localPort = desktopConfig['local_port'] as int? ?? 8642;
     await disconnect();
+    // 动态找可用端口，避免与 WSL gateway（默认 8642）冲突
+    final freePort = await _findFreePort();
     stateNotifier.value = state.copyWith(
       mode: ConnectionMode.embedded,
       status: ConnStatus.connecting,
       message: '切换到内嵌模式...',
-      port: localPort,
+      port: freePort,
     );
     await _embeddedBridge.connect();
     await _applyConnectionContext(namespace: 'embedded', serverId: 'embedded');
-
-    // 先尝试已有 Gateway
-    if (await _checkHealth(localPort)) {
-      stateNotifier.value = state.copyWith(status: ConnStatus.connected, message: '内嵌模式');
-      return;
-    }
 
     // 确保 hermes.exe 存在，否则自动下载
     final exePath = '$hermesBundlePath\\hermes.exe';
@@ -807,9 +824,10 @@ echo "NO_METHOD"
     if (started) {
       stateNotifier.value = state.copyWith(status: ConnStatus.connected, message: '内嵌模式');
     } else {
+      final stderrHint = _lastEmbeddedStderr.isNotEmpty ? ': ${_lastEmbeddedStderr.trim()}' : '';
       stateNotifier.value = state.copyWith(
         status: ConnStatus.error,
-        message: '内嵌 Gateway 启动失败，请检查端口 $localPort 是否被占用',
+        message: '内嵌 Gateway 启动失败$stderrHint',
       );
     }
   }
@@ -823,20 +841,49 @@ echo "NO_METHOD"
     final hermesDir = Directory('$userHome\\.hermes');
     if (!hermesDir.existsSync()) hermesDir.createSync(recursive: true);
 
-    // 首次启动：自动生成默认 .env（不含 API_SERVER_KEY，本地通信无需认证）
+    // 确保 .env 中有 API_SERVER_KEY（API Server 必需）、API_SERVER_PORT、API_SERVER_ENABLED
     final envFile = File('$userHome\\.hermes\\.env');
-    if (!await envFile.exists()) {
-      await envFile.writeAsString('API_SERVER_PORT=${state.port}\n');
-    }
-
+    // 读取现有内容并过滤掉垃圾行
+    final oldLines = envFile.existsSync()
+        ? await envFile.readAsString().then((s) => s.split('\n')
+            .where((l) => l.trim().isNotEmpty && !l.trim().startsWith('# .env not found'))
+            .toList())
+        : <String>[];
+    // 移除已有的 API_SERVER_KEY/PORT/ENABLED 行
+    final cleanLines = oldLines
+        .where((l) => !l.startsWith('API_SERVER_KEY=') &&
+                      !l.startsWith('API_SERVER_PORT=') &&
+                      !l.startsWith('API_SERVER_ENABLED='))
+        .toList();
+    // 获取/生成 API key（与 desktop_config.json 同步）
+    final apiKey = await _ensureApiKey();
+    cleanLines.addAll([
+      'API_SERVER_KEY=$apiKey',
+      'API_SERVER_PORT=${state.port}',
+      'API_SERVER_ENABLED=true',
+    ]);
+    await envFile.writeAsString('${cleanLines.join('\n')}\n');
     // 启动 Gateway 守护进程（不等待退出）
+    // 使用 runInShell: false 直接启动 hermes.exe，以便 disconnect 能直接杀 hermes 而非 cmd.exe
     _embeddedGatewayProcess = await Process.start(
       exePath,
       ['gateway', 'run'],
-      runInShell: true,
+      runInShell: false,
+      workingDirectory: '$userHome\\.hermes',
     );
+    // 捕获 stderr 用于诊断启动失败原因
+    _lastEmbeddedStderr = '';
+    _embeddedGatewayProcess!.stderr.listen((chunk) {
+      _lastEmbeddedStderr += utf8.decode(chunk, allowMalformed: true);
+    });
     // 后台监听退出，以便后续重启
-    _embeddedGatewayProcess!.exitCode.then((_) {
+    _embeddedGatewayProcess!.exitCode.then((code) {
+      _embeddedGatewayExited = true;
+      // disconnect() 将 _embeddedGatewayProcess 置 null，跳过自动重启
+      if (_embeddedGatewayProcess == null) return;
+      if (code != 0 && _lastEmbeddedStderr.isEmpty) {
+        _lastEmbeddedStderr = 'process exited with code $code';
+      }
       if (state.mode == ConnectionMode.embedded &&
           state.status == ConnStatus.connected) {
         // Gateway 意外退出，尝试自动重启
@@ -844,9 +891,13 @@ echo "NO_METHOD"
       }
     });
 
-    // 等待就绪（最长 15s）
+    // 等待就绪（最长 15s），同时检查进程是否还在运行
     for (int i = 0; i < 15; i++) {
       await Future.delayed(const Duration(seconds: 1));
+      // 进程已退出（端口被占用或启动失败），不再等待
+      if (_embeddedGatewayExited) {
+        break;
+      }
       if (await _checkHealth(state.port)) return true;
     }
     return false;
@@ -857,6 +908,7 @@ echo "NO_METHOD"
   }
 
   Future<void> disconnect() async {
+    _embeddedGatewayExited = false;
     _embeddedGatewayProcess?.kill();
     _embeddedGatewayProcess = null;
     await Future.wait([
@@ -864,6 +916,12 @@ echo "NO_METHOD"
       _wslBridge.disconnect(),
       _embeddedBridge.disconnect(),
     ]);
+    // 清理内嵌模式锁文件，防止下次启动报 "runtime lock already held"
+    final userHome = Platform.environment['USERPROFILE'] ?? '';
+    for (final lock in ['gateway.lock', 'runtime.lock', 'hermes.pid']) {
+      final f = File('$userHome\\.hermes\\$lock');
+      if (await f.exists()) try { await f.delete(); } catch (_) {}
+    }
     _tunnelPort = 0;
     stateNotifier.value = state.copyWith(status: ConnStatus.disconnected);
   }
@@ -925,7 +983,8 @@ echo "NO_METHOD"
     _wslDistro = d;
     _wslBridge.setDistro(d);
     final config = await ConfigService().readDesktopConfig();
-    config['wsl_distro'] = d;
+    config['local'] ??= <String, dynamic>{};
+    (config['local'] as Map<String, dynamic>)['wsl_distro'] = d;
     await ConfigService().writeDesktopConfig(config);
   }
 
@@ -1021,6 +1080,17 @@ echo "NO_METHOD"
       await Future.delayed(const Duration(seconds: 5));
     }
     return checkLocal();
+  }
+
+  /// 杀死当前内嵌 Gateway 并直接重启
+  Future<bool> restartEmbeddedGateway() async {
+    if (state.mode != ConnectionMode.embedded) return false;
+    _embeddedGatewayExited = false;
+    _embeddedGatewayProcess?.kill();
+    _embeddedGatewayProcess = null;
+    // 等旧进程完全退出释放端口
+    await Future.delayed(const Duration(milliseconds: 500));
+    return _ensureEmbeddedGatewayRunning();
   }
 
   Future<String> downloadHermesBundle(

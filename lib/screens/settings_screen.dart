@@ -88,15 +88,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _connectionSuccess = state.status == ConnStatus.connected;
     });
 
-    // Load saved SSH config
+    // Load saved remote SSH config from remote namespace
     final config = await _configService.readDesktopConfig();
-    final ssh = config['ssh_config'] as Map<String, dynamic>?;
-    if (ssh != null) {
+    final remote = config['remote'] as Map<String, dynamic>?;
+    if (remote != null) {
       setState(() {
-        _hostController.text = ssh['host'] ?? '';
-        _sshPortController.text = (ssh['port'] ?? 22).toString();
-        _userController.text = ssh['user'] ?? '';
-        _passwordController.text = ssh['password'] ?? '';
+        _hostController.text = remote['ssh_host'] ?? '';
+        _sshPortController.text = (remote['ssh_port'] ?? 22).toString();
+        _userController.text = remote['ssh_user'] ?? '';
+        _passwordController.text = remote['ssh_password'] ?? '';
       });
     }
   }
@@ -147,16 +147,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _saveConnectionConfig() async {
     final config = await _configService.readDesktopConfig();
-    config['connection_mode'] = _selectedMode == ConnectionMode.remote
+    final modeStr = _selectedMode == ConnectionMode.remote
         ? 'remote'
         : (_selectedMode == ConnectionMode.embedded ? 'embedded' : 'local');
-    config['local_port'] = int.tryParse(_portController.text.trim()) ?? 8642;
-    config['ssh_config'] = {
-      'host': _hostController.text.trim(),
-      'port': int.tryParse(_sshPortController.text.trim()) ?? 22,
-      'user': _userController.text.trim(),
-      'password': _passwordController.text.trim(),
-    };
+    config['connection_mode'] = modeStr;
+    // 各模式写入自己的命名空间，互不污染
+    final port = int.tryParse(_portController.text.trim()) ?? 8642;
+    switch (_selectedMode) {
+      case ConnectionMode.local:
+        config['local'] ??= <String, dynamic>{};
+        (config['local'] as Map<String, dynamic>)['gateway_port'] = port;
+        break;
+      case ConnectionMode.remote:
+        config['remote'] ??= <String, dynamic>{};
+        (config['remote'] as Map<String, dynamic>)['ssh_host'] = _hostController.text.trim();
+        (config['remote'] as Map<String, dynamic>)['ssh_port'] = int.tryParse(_sshPortController.text.trim()) ?? 22;
+        (config['remote'] as Map<String, dynamic>)['ssh_user'] = _userController.text.trim();
+        (config['remote'] as Map<String, dynamic>)['ssh_password'] = _passwordController.text.trim();
+        (config['remote'] as Map<String, dynamic>)['gateway_port'] = port;
+        break;
+      case ConnectionMode.embedded:
+        break;
+    }
     await _configService.writeDesktopConfig(config);
 
     if (_selectedMode == ConnectionMode.local) {
@@ -498,12 +510,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: 16),
                 ],
 
-                // ── Port Override Section (not needed in remote mode — port auto-handled) ──
-                if (_selectedMode != ConnectionMode.remote)
+                // ── Port Override Section (内嵌自动分配端口，无需配置) ──
+                if (_selectedMode != ConnectionMode.embedded)
                   _buildSection('端口设置', [
                     _buildPortOverrideField(colorScheme),
                   ]),
-                if (_selectedMode != ConnectionMode.remote) const SizedBox(height: 16),
+                if (_selectedMode != ConnectionMode.embedded) const SizedBox(height: 16),
 
                 // ── Apply Button ──
                 Row(
@@ -528,6 +540,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildSettingRow('当前模型', _modelConfig['model'] ?? '-'),
                   _buildSettingRow('Provider', _modelConfig['provider'] ?? '-'),
                   _buildSettingRow('API 地址', _modelConfig['base_url'] ?? '-'),
+                  if ((_modelConfig['model'] ?? '-') == '-' && _cm.state.mode == ConnectionMode.embedded)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 14, color: AppTheme.warning),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '未读取到模型配置，请在「模型与技能」页配置后重启 Gateway',
+                              style: TextStyle(fontSize: 12, color: AppTheme.warning),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ]),
                 SizedBox(height: 16),
 
@@ -701,6 +729,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _selectedMode = value;
           _connectionSuccess = null;
           _connectionMessage = null;
+          if (value == ConnectionMode.local || value == ConnectionMode.remote) {
+            _portController.text = '8642';
+          }
         });
       },
       child: AnimatedContainer(
@@ -727,6 +758,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _selectedMode = v!;
                   _connectionSuccess = null;
                   _connectionMessage = null;
+                  // 切换模式时更新端口字段为默认值
+                  if (v == ConnectionMode.local) {
+                    _portController.text = '8642';
+                  } else if (v == ConnectionMode.remote) {
+                    _portController.text = '8642';
+                  }
                 });
               },
               activeColor: colorScheme.primary,
@@ -1041,7 +1078,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       const Divider(height: 16),
       // Version info
-      _buildSettingRow('版本信息', _hermesVersion),
+      _buildSettingRow('版本信息', _hermesVersion.split('\n').first.trim()),
       const Divider(height: 16),
       // Control buttons
       ValueListenableBuilder<ConnectionInfo>(

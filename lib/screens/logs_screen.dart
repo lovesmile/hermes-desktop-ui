@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../config/theme.dart';
+import '../services/connection_manager.dart';
 import '../services/gateway_service.dart';
 import '../models/log_entry.dart';
 
@@ -80,6 +81,46 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
       default:
         return Theme.of(context).colorScheme.onSurfaceVariant;
     }
+  }
+
+  Widget _buildEmptyState() {
+    final cs = Theme.of(context).colorScheme;
+    final isEmbedded = ConnectionManager().state.mode == ConnectionMode.embedded;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.article_outlined, size: 48, color: cs.onSurfaceVariant),
+          SizedBox(height: 12),
+          Text('暂无日志', style: TextStyle(color: cs.onSurfaceVariant)),
+          if (isEmbedded) ...[
+            SizedBox(height: 12),
+            Container(
+              margin: EdgeInsets.symmetric(horizontal: 32),
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.warning.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.warning.withValues(alpha: 0.2)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: AppTheme.warning),
+                  SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      '内嵌模式日志文件可能不存在，可查看 ~/.hermes/logs/ 目录确认',
+                      style: TextStyle(fontSize: 12, color: AppTheme.warning),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Future<void> _confirmDeleteLogs() async {
@@ -220,19 +261,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
             child: _loading
                 ? Center(child: CircularProgressIndicator())
                 : _allLogs.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.article_outlined,
-                                size: 48,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant),
-                            SizedBox(height: 12),
-                            Text('暂无日志',
-                                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                          ],
-                        ),
-                      )
+                    ? _buildEmptyState()
                     : ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.all(8),

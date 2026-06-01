@@ -52,10 +52,54 @@ class ConfigService {
     try {
       final file = File(resolveDesktopConfigPath());
       if (await file.exists()) {
-        return jsonDecode(await file.readAsString());
+        final data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+        if (_needsMigration(data)) {
+          _migrateConfig(data);
+          await writeDesktopConfig(data);
+        }
+        return data;
       }
     } catch (_) {}
     return {};
+  }
+
+  /// 检查是否仍是旧版扁平 config（带 local_port / ssh_config 等顶层字段）
+  bool _needsMigration(Map<String, dynamic> config) {
+    return config.containsKey('local_port') || config.containsKey('ssh_config');
+  }
+
+  /// 将旧版扁平 config 迁移为按 mode 命名空间隔离的新布局
+  void _migrateConfig(Map<String, dynamic> config) {
+    if (!config.containsKey('local')) {
+      config['local'] = config.containsKey('local_port')
+          ? {
+              'gateway_port': config['local_port'] ?? 8642,
+              'wsl_distro': config['wsl_distro'] ?? 'Ubuntu',
+            }
+          : <String, dynamic>{};
+    }
+    if (!config.containsKey('remote')) {
+      if (config.containsKey('ssh_config')) {
+        final ssh = config['ssh_config'] as Map? ?? {};
+        config['remote'] = {
+          'ssh_host': ssh['host'] ?? '',
+          'ssh_port': ssh['port'] ?? 22,
+          'ssh_user': ssh['user'] ?? '',
+          'ssh_password': ssh['password'] ?? '',
+          'ssh_key_path': ssh['keyPath'] ?? '',
+          'gateway_port': config['local_port'] ?? 8642,
+        };
+      } else {
+        config['remote'] = <String, dynamic>{};
+      }
+    }
+    if (!config.containsKey('embedded')) {
+      config['embedded'] = <String, dynamic>{};
+    }
+    // 清理导致跨模式污染的旧扁平字段（保留 gateway_url 供设置页手动配置使用）
+    config.remove('local_port');
+    config.remove('wsl_distro');
+    config.remove('ssh_config');
   }
 
   Future<bool> writeDesktopConfig(Map<String, dynamic> data) async {

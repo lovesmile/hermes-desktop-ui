@@ -33,8 +33,8 @@ jobs:
       - name: Build Hermes standalone exe
         shell: pwsh
         run: |
-          pip install hermes-agent pyinstaller
-          pyinstaller --onefile --name hermes scripts/run_hermes.py
+          pip install hermes-agent aiohttp pyinstaller
+          pyinstaller --onefile --name hermes --hidden-import aiohttp scripts/run_hermes.py
 
       - name: Bundle Hermes for embedded mode
         shell: pwsh

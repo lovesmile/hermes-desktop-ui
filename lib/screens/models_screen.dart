@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/config_service.dart';
+import '../services/connection_manager.dart';
 import '../services/gateway_service.dart';
 import '../services/hermes_file_service.dart';
 import 'chat_screen.dart';
@@ -261,9 +262,29 @@ class _ModelsScreenState extends State<ModelsScreen> {
                           ),
                           const SizedBox(height: 16),
                           if (_modelConfig.isEmpty)
-                            Text('未读取到模型配置',
-                                style: TextStyle(
-                                    color: Theme.of(context).colorScheme.onSurfaceVariant))
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('未读取到模型配置',
+                                    style: TextStyle(
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                if (ConnectionManager().state.mode == ConnectionMode.embedded) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.info_outline, size: 14, color: AppTheme.warning),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          '内嵌模式配置文件可能不存在，请点击"切换模型"配置后保存',
+                                          style: TextStyle(fontSize: 12, color: AppTheme.warning),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            )
                           else
                           ..._modelConfig.entries.map((e) => _configRow(
                               e.key, e.value)),
@@ -659,25 +680,31 @@ class _ModelsScreenState extends State<ModelsScreen> {
     try {
       // 通过 ConfigService 读写，自动适配 local/embedded/remote 模式
       var config = await _configService.readConfig();
-      // model/default 都可能用作模型名
-      config = config.replaceAll(
-          RegExp(r'^(\s+)(?:default|model):.*$', multiLine: true), '  default: $model');
-      config = config.replaceAll(
-          RegExp(r'^(\s+)provider:.*$', multiLine: true), '  provider: $provider');
-      if (baseUrl.isNotEmpty) {
+
+      // config.yaml 不存在时生成最小模板
+      if (config.isEmpty || config == 'config not found') {
+        config = 'model:\n  default: $model\n  provider: $provider\n';
+        if (baseUrl.isNotEmpty) config += '  base_url: $baseUrl\n';
+      } else {
+        // model/default 都可能用作模型名
         config = config.replaceAll(
-            RegExp(r'^(\s+)base_url:.*$', multiLine: true), '  base_url: $baseUrl');
-      }
-      // 兼容根级格式
-      config = config.replaceAll(
-          RegExp(r'^(?:default|model):.*$', multiLine: true), 'default: $model');
-      config = config.replaceAll(
-          RegExp(r'^provider:.*$', multiLine: true), 'provider: $provider');
-      if (baseUrl.isNotEmpty) {
+            RegExp(r'^(\s+)(?:default|model):.*$', multiLine: true), '  default: $model');
         config = config.replaceAll(
-            RegExp(r'^base_url:.*$', multiLine: true), 'base_url: $baseUrl');
+            RegExp(r'^(\s+)provider:.*$', multiLine: true), '  provider: $provider');
+        if (baseUrl.isNotEmpty) {
+          config = config.replaceAll(
+              RegExp(r'^(\s+)base_url:.*$', multiLine: true), '  base_url: $baseUrl');
+        }
       }
-      await _configService.writeConfig(config);
+      final saved = await _configService.writeConfig(config);
+      if (!saved) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('配置写入失败，请检查文件权限')),
+          );
+        }
+        return;
+      }
 
       // 写 .env（API Key + Base URL 的环境变量）
       if (apiKey.isNotEmpty) {
@@ -708,8 +735,24 @@ class _ModelsScreenState extends State<ModelsScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('配置已保存，请重启 Gateway')),
+          const SnackBar(content: Text('配置已保存，正在重启 Gateway...')),
         );
+      }
+
+      // 重启 Gateway 使新配置生效
+      final cm = ConnectionManager();
+      if (cm.state.mode == ConnectionMode.embedded) {
+        await cm.restartEmbeddedGateway();
+      } else {
+        await GatewayService().restartGateway();
+        // 本地/远程模式等待 Gateway 重新就绪（最长 10s）
+        for (int i = 0; i < 10; i++) {
+          await Future.delayed(const Duration(seconds: 1));
+          if (await cm.checkLocal()) break;
+        }
+      }
+
+      if (mounted) {
         _loadData(forceRefresh: true);
       }
     } catch (e) {

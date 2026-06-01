@@ -20,12 +20,12 @@ class SshFileService {
 
   /// 从桌面配置初始化
   Future<void> initFromConfig(Map<String, dynamic> config) async {
-    final sshConfig = config['ssh_config'] as Map<String, dynamic>? ?? {};
-    _host = sshConfig['host'] as String? ?? '';
-    _port = sshConfig['port'] as int? ?? 22;
-    _user = sshConfig['user'] as String? ?? '';
-    _keyPath = sshConfig['keyPath'] as String?;
-    _password = sshConfig['password'] as String?;
+    final sshConfig = config['remote'] as Map<String, dynamic>? ?? {};
+    _host = sshConfig['ssh_host'] as String? ?? '';
+    _port = sshConfig['ssh_port'] as int? ?? 22;
+    _user = sshConfig['ssh_user'] as String? ?? '';
+    _keyPath = sshConfig['ssh_key_path'] as String?;
+    _password = sshConfig['ssh_password'] as String?;
     _initialized = _host.isNotEmpty && _user.isNotEmpty;
   }
 
