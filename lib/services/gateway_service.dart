@@ -316,17 +316,7 @@ class GatewayService {
     final cm = ConnectionManager();
     switch (cm.state.mode) {
       case ConnectionMode.embedded:
-        try {
-          _resetClient();
-          final request = await _client
-              .postUrl(Uri.parse('$_baseUrl/gateway/restart'))
-              .timeout(const Duration(seconds: 5));
-          _applyAuth(request);
-          final response = await request.close();
-          return response.statusCode == 200;
-        } catch (_) {
-          return false;
-        }
+        return cm.restartEmbeddedGateway();
       case ConnectionMode.local:
       case ConnectionMode.remote: {
         final result = await cm.runShell(

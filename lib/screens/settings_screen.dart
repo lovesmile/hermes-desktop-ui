@@ -48,11 +48,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadConfig();
     _loadConnectionState();
     _cm.stateNotifier.addListener(_onConnectionChanged);
+    GatewayService().refreshNotifier.addListener(_onDataRefresh);
   }
 
   @override
   void dispose() {
     _cm.stateNotifier.removeListener(_onConnectionChanged);
+    GatewayService().refreshNotifier.removeListener(_onDataRefresh);
     _hostController.dispose();
     _sshPortController.dispose();
     _userController.dispose();
@@ -74,9 +76,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
 
     if (justConnected) {
-      // 无论哪种模式，连接成功后都重新加载配置
       _loadConfig();
     }
+  }
+
+  void _onDataRefresh() {
+    if (!mounted) return;
+    _loadConfig();
   }
 
   Future<void> _loadConnectionState() async {

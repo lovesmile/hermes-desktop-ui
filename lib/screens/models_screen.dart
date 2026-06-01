@@ -681,22 +681,30 @@ class _ModelsScreenState extends State<ModelsScreen> {
       // 通过 ConfigService 读写，自动适配 local/embedded/remote 模式
       var config = await _configService.readConfig();
 
-      // config.yaml 不存在时生成最小模板
-      if (config.isEmpty || config == 'config not found') {
-        config = 'model:\n  default: $model\n  provider: $provider\n';
-        if (baseUrl.isNotEmpty) config += '  base_url: $baseUrl\n';
-      } else {
-        // model/default 都可能用作模型名
-        config = config.replaceAll(
-            RegExp(r'^(\s+)(?:default|model):.*$', multiLine: true), '  default: $model');
-        config = config.replaceAll(
-            RegExp(r'^(\s+)provider:.*$', multiLine: true), '  provider: $provider');
-        if (baseUrl.isNotEmpty) {
-          config = config.replaceAll(
-              RegExp(r'^(\s+)base_url:.*$', multiLine: true), '  base_url: $baseUrl');
-        }
+      // 构建 model section
+      final modelYaml = StringBuffer()
+        ..writeln('model:')
+        ..writeln('  default: $model')
+        ..writeln('  provider: $provider');
+      if (baseUrl.isNotEmpty) {
+        modelYaml.writeln('  base_url: $baseUrl');
       }
-      final saved = await _configService.writeConfig(config);
+
+      // 清除旧 model section，保留其他 root key（如 mcp_servers）
+      var existing = config;
+      if (existing.isNotEmpty && existing != 'config not found') {
+        existing = existing.replaceAll(
+          RegExp(r'^model:.*(?:\n(?!\S).*)*', multiLine: true), '');
+        existing = existing.trimLeft();
+      } else {
+        existing = '';
+      }
+
+      final merged = existing.isEmpty
+          ? modelYaml.toString().trimRight()
+          : modelYaml.toString() + existing;
+
+      final saved = await _configService.writeConfig(merged);
       if (!saved) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -743,6 +751,17 @@ class _ModelsScreenState extends State<ModelsScreen> {
       final cm = ConnectionManager();
       if (cm.state.mode == ConnectionMode.embedded) {
         await cm.restartEmbeddedGateway();
+        // 内嵌模式：hermes 启动时会重写 config.yaml，等待就绪后重新写入用户配置
+        for (int i = 0; i < 10; i++) {
+          await Future.delayed(const Duration(seconds: 1));
+          if (await cm.checkLocal()) break;
+        }
+        final savedAgain = await _configService.writeConfig(merged);
+        if (!savedAgain && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('配置写入失败，请检查文件权限')),
+          );
+        }
       } else {
         await GatewayService().restartGateway();
         // 本地/远程模式等待 Gateway 重新就绪（最长 10s）

@@ -113,11 +113,11 @@ class MainShellState extends State<MainShell> {
   static final _navItems = [
     (Icons.dashboard_outlined, Icons.dashboard, '仪表盘'),
     (Icons.chat_outlined, Icons.chat, '聊天'),
-    (Icons.devices_outlined, Icons.devices, '平台'),
     (Icons.schedule_outlined, Icons.schedule, '定时'),
-    (Icons.article_outlined, Icons.article, '日志'),
     (Icons.memory_outlined, Icons.memory, '模型与技能'),
     (Icons.folder_outlined, Icons.folder, '文件'),
+    (Icons.devices_outlined, Icons.devices, '平台'),
+    (Icons.article_outlined, Icons.article, '日志'),
     (Icons.settings_outlined, Icons.settings, '设置'),
   ];
 
@@ -400,11 +400,11 @@ class MainShellState extends State<MainShell> {
                           children: [
                             DashboardScreen(onNavigate: navigateTo, tabNotifier: tabNotifier),
                             const ChatScreen(),
-                            const PlatformsScreen(),
                             const CronScreen(),
-                            const LogsScreen(),
                             ModelsScreen(onNavigate: navigateTo),
                             const FileBrowserScreen(),
+                            const PlatformsScreen(),
+                            const LogsScreen(),
                             const SettingsScreen(),
                           ],
                         ),

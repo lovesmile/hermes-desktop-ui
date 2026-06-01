@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -78,9 +78,6 @@ class ConnectionManager {
   // 最后一条远程 Gateway 启动命令的输出（用于错误展示）
   String _lastRemoteGatewayOutput = '';
 
-  // 内嵌 Gateway 启动时的 stderr（用于诊断启动失败原因）
-  String _lastEmbeddedStderr = '';
-
   /// SSH 隧道本地端口（与远程 gateway 端口不同，避免冲突）
   int _tunnelPort = 0;
 
@@ -90,6 +87,9 @@ class ConnectionManager {
       EmbeddedBridge(bundlePath: hermesBundlePath);
   Process? _embeddedGatewayProcess;
   bool _embeddedGatewayExited = false;
+  bool _restartingEmbedded = false; // 防止健康检查定时器并发重启
+  // 内嵌 Gateway 启动时的 stderr（用于诊断启动失败原因）
+  String _lastEmbeddedStderr = '';
 
   static const String defaultHermesDownloadUrl =
       'https://github.com/lovesmile/hermes-desktop-ui/releases/latest/download/hermes-bundle-windows.zip';
@@ -103,6 +103,8 @@ class ConnectionManager {
   Future<void> init() async {
     await ConfigService.ensureInitialized();
     final config = await ConfigService().readDesktopConfig();
+
+    _wslDistro = config['wsl_distro'] ?? 'Ubuntu';
 
     final modeStr = config['connection_mode'] as String? ?? 'local';
     final mode = modeStr == 'remote'
@@ -137,6 +139,12 @@ class ConnectionManager {
         ssh = const SshConfig();
     }
     _wslBridge.setDistro(_wslDistro);
+
+    // 确保首次启动检查所需的字段存在
+    if (!config.containsKey('gateway_url')) {
+      config['gateway_url'] = ConnectionManager().gatewayUrl;
+    }
+    await ConfigService().writeDesktopConfig(config);
 
     stateNotifier.value =
         ConnectionInfo(status: ConnStatus.connecting, mode: mode, port: port);
@@ -186,7 +194,7 @@ class ConnectionManager {
         return '$rh/.hermes';
       case ConnectionMode.local:
         final lr = await runShell('echo \$HOME', allowFailure: true);
-        final lh = lr.stdout.trim().isNotEmpty ? lr.stdout.trim() : r'$HOME';
+        final lh = lr.stdout.trim().isNotEmpty ? lr.stdout.trim() : r'\$HOME';
         return '$lh/.hermes';
     }
   }
@@ -364,7 +372,7 @@ class ConnectionManager {
     try {
       // 优先读 .env 中的端口配置
       final result = await _wslBridge.exec(
-        'grep -oP "^API_SERVER_PORT=\\K\\d+" ~/.hermes/.env 2>/dev/null || true',
+        'grep -oP "^API_SERVER_PORT=\\\K\d+" ~/.hermes/.env 2>/dev/null || true',
       );
       final trimmed = result.stdout.trim();
       if (trimmed.isNotEmpty) {
@@ -441,15 +449,13 @@ class ConnectionManager {
 
       if (uploadCode != 0) return config;
 
-      // 保存配置，保留密码用于密钥文件丢失后的恢复
+      // 保存配置
       final dc = await ConfigService().readDesktopConfig();
-      dc['remote'] ??= <String, dynamic>{};
-      final remote = dc['remote'] as Map<String, dynamic>;
-      remote['ssh_host'] = config.host;
-      remote['ssh_port'] = config.port;
-      remote['ssh_user'] = config.user;
-      remote['ssh_key_path'] = keyPath;
-      remote['ssh_password'] = config.password;
+      dc['remote'] = {
+        ...?dc['remote'] as Map?,
+        'ssh_key_path': keyPath,
+        'ssh_password': config.password,
+      };
       await ConfigService().writeDesktopConfig(dc);
 
       return config.copyWith(keyPath: keyPath, password: null);
@@ -464,7 +470,7 @@ class ConnectionManager {
     // 从配置文件读取最新 gateway 端口，避免 state.port 过期
     final desktopConfig = await ConfigService().readDesktopConfig();
     final remoteCfg = (desktopConfig['remote'] as Map?) ?? {};
-    final remoteGatewayPort = (remoteCfg['gateway_port'] as int?) ?? 8642;
+    final remoteGatewayPort = remoteCfg['gateway_port'] as int? ?? 8642;
 
     stateNotifier.value = state.copyWith(
       status: ConnStatus.connecting,
@@ -509,9 +515,7 @@ class ConnectionManager {
         dc2['api_key'] = remoteKey;
         await ConfigService().writeDesktopConfig(dc2);
         GatewayService().invalidateApiKey();
-        // 远程 .env 已有 key，保留不动
       } else {
-        // 远程 .env 无 key → 用本地 key（自动生成）写入远程 .env 并重启 service
         final localKey = await _ensureApiKey();
         await runShell(
           r"sed -i '/^API_SERVER_KEY=/d' ~/.hermes/.env 2>/dev/null; "
@@ -558,7 +562,6 @@ class ConnectionManager {
         await _applyConnectionContext(namespace: ns, serverId: config.host);
         return true;
       }
-      // 从 stdout 提取具体失败原因展示给用户
       stateNotifier.value = state.copyWith(
         status: ConnStatus.error,
         message: _lastRemoteGatewayOutput.isNotEmpty ? '远程 Gateway 启动失败: $_lastRemoteGatewayOutput' : '远程 Gateway 启动失败，请手动登录服务器运行: hermes gateway run',
@@ -575,11 +578,9 @@ class ConnectionManager {
   }
 
   Future<bool> _startRemoteGateway() async {
-    // 读取远程 gateway 端口（与 SSH 隧道目标端口一致）
     final remotePort = state.port;
     final apiKey = await _ensureApiKey();
 
-    // 单次 SSH 连接：配置 .env + 尝试所有启动方式 + 等待端口就绪
     final setupCmd = r'''
 # 1. 配置 .env
 mkdir -p ~/.hermes
@@ -697,7 +698,6 @@ echo "NO_METHOD"
       return true;
     }
 
-    // 隧道已建立但 Gateway 无响应 — 尝试启动
     if (_remoteExecutor.tunnelEstablished) {
       stateNotifier.value = state.copyWith(
         status: ConnStatus.connecting,
@@ -731,7 +731,7 @@ echo "NO_METHOD"
   Future<void> switchToLocal() async {
     final desktopConfig = await ConfigService().readDesktopConfig();
     final localCfg = (desktopConfig['local'] as Map?) ?? {};
-    final localPort = (localCfg['gateway_port'] as int?) ?? 8642;
+    final localPort = localCfg['gateway_port'] as int? ?? 8642;
     await disconnect();
     stateNotifier.value = state.copyWith(
       mode: ConnectionMode.local,
@@ -740,13 +740,39 @@ echo "NO_METHOD"
       port: localPort,
     );
     await _wslBridge.connect();
-    // 写入 API_SERVER_KEY 后重启 WSL gateway，保证认证一致
+
     final localApiKey = await _ensureApiKey();
-    final restartOk = await _wslBridge.exec(
+    // 如果 gateway 已在运行且 API_SERVER_KEY 一致，跳过重启
+    bool restartOk = true;
+    final alreadyHealthy = await checkLocal();
+    if (!alreadyHealthy) {
+      restartOk = await _restartLocalGatewayShell(localApiKey);
+      await Future.delayed(const Duration(seconds: 3));
+    } else {
+      final currentKey = await _wslBridge.exec(
+        r"grep '^API_SERVER_KEY=' ~/.hermes/.env 2>/dev/null | cut -d= -f2",
+      ).then((r) => r.stdout.trim());
+      if (currentKey != localApiKey) {
+        restartOk = await _restartLocalGatewayShell(localApiKey);
+        await Future.delayed(const Duration(seconds: 3));
+      }
+    }
+
+    await _applyConnectionContext(namespace: 'local', serverId: 'local');
+    final healthy = await checkLocal();
+    if (!healthy || !restartOk) {
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.error,
+        message: restartOk ? '本地 Gateway 启动后无响应' : '本地 Gateway 重启失败：未找到 hermes 命令，请检查 WSL 中 hermes 是否安装',
+      );
+    }
+  }
+
+  Future<bool> _restartLocalGatewayShell(String apiKey) async {
+    return _wslBridge.exec(
       '${hermesBinShell}'
       r"sed -i '/^API_SERVER_KEY=/d' ~/.hermes/.env 2>/dev/null; "
-      'echo "API_SERVER_KEY=$localApiKey" >> ~/.hermes/.env; '
-      // 优先 systemd 管理，没有 systemd 时才用 pkill + nohup
+      'echo "API_SERVER_KEY=$apiKey" >> ~/.hermes/.env; '
       r'if systemctl --user status hermes-gateway >/dev/null 2>&1; then '
       r'  systemctl --user restart hermes-gateway; '
       r'  echo "OK"; '
@@ -762,16 +788,6 @@ echo "NO_METHOD"
       r'  fi; '
       r'fi',
     ).then((r) => r.stdout.trim().contains('OK')).catchError((_) => false);
-    await Future.delayed(const Duration(seconds: 3));
-
-    await _applyConnectionContext(namespace: 'local', serverId: 'local');
-    final healthy = await checkLocal();
-    if (!healthy || !restartOk) {
-      stateNotifier.value = state.copyWith(
-        status: ConnStatus.error,
-        message: restartOk ? '本地 Gateway 启动后无响应' : '本地 Gateway 重启失败：未找到 hermes 命令，请检查 WSL 中 hermes 是否安装',
-      );
-    }
   }
 
   Future<void> switchToEmbedded() async {
@@ -801,7 +817,6 @@ echo "NO_METHOD"
           message: '正在安装...',
         );
         await extractBundle(zipPath);
-        // 清理临时 zip
         try { await File(zipPath).delete(); } catch (_) {}
         if (!await File(exePath).exists()) {
           stateNotifier.value = state.copyWith(
@@ -832,10 +847,11 @@ echo "NO_METHOD"
     }
   }
 
-  /// 确保内嵌 Gateway 进程在运行，首次启动时自动创建默认 .env
   Future<bool> _ensureEmbeddedGatewayRunning() async {
+    if (_restartingEmbedded) return false;
+    _restartingEmbedded = true;
     final exePath = '$hermesBundlePath\\hermes.exe';
-    if (!await File(exePath).exists()) return false;
+    if (!await File(exePath).exists()) { _restartingEmbedded = false; return false; }
 
     final userHome = Platform.environment['USERPROFILE'] ?? '';
     final hermesDir = Directory('$userHome\\.hermes');
@@ -843,19 +859,16 @@ echo "NO_METHOD"
 
     // 确保 .env 中有 API_SERVER_KEY（API Server 必需）、API_SERVER_PORT、API_SERVER_ENABLED
     final envFile = File('$userHome\\.hermes\\.env');
-    // 读取现有内容并过滤掉垃圾行
     final oldLines = envFile.existsSync()
         ? await envFile.readAsString().then((s) => s.split('\n')
             .where((l) => l.trim().isNotEmpty && !l.trim().startsWith('# .env not found'))
             .toList())
         : <String>[];
-    // 移除已有的 API_SERVER_KEY/PORT/ENABLED 行
     final cleanLines = oldLines
         .where((l) => !l.startsWith('API_SERVER_KEY=') &&
                       !l.startsWith('API_SERVER_PORT=') &&
                       !l.startsWith('API_SERVER_ENABLED='))
         .toList();
-    // 获取/生成 API key（与 desktop_config.json 同步）
     final apiKey = await _ensureApiKey();
     cleanLines.addAll([
       'API_SERVER_KEY=$apiKey',
@@ -863,8 +876,24 @@ echo "NO_METHOD"
       'API_SERVER_ENABLED=true',
     ]);
     await envFile.writeAsString('${cleanLines.join('\n')}\n');
+    // 清理残留进程和锁文件：先杀进程，等锁确实释放了再启动
+    await Process.run('taskkill', ['/F', '/IM', 'hermes.exe']);
+    final lockFiles = ['gateway.lock', 'runtime.lock', 'hermes.pid'];
+    for (final lock in lockFiles) {
+      final f = File('$userHome\\.hermes\\$lock');
+      for (int i = 0; i < 10; i++) {
+        if (!await f.exists()) break;
+        try {
+          await f.delete();
+          break;
+        } catch (_) {
+          // 进程还在占锁，等 300ms 再试
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
+      }
+    }
     // 启动 Gateway 守护进程（不等待退出）
-    // 使用 runInShell: false 直接启动 hermes.exe，以便 disconnect 能直接杀 hermes 而非 cmd.exe
+    // runInShell: false → Process.kill() 直接杀 hermes.exe（不经过 cmd.exe），避免锁残留
     _embeddedGatewayProcess = await Process.start(
       exePath,
       ['gateway', 'run'],
@@ -877,16 +906,15 @@ echo "NO_METHOD"
       _lastEmbeddedStderr += utf8.decode(chunk, allowMalformed: true);
     });
     // 后台监听退出，以便后续重启
-    _embeddedGatewayProcess!.exitCode.then((code) {
+    final proc = _embeddedGatewayProcess!;
+    proc.exitCode.then((code) {
       _embeddedGatewayExited = true;
-      // disconnect() 将 _embeddedGatewayProcess 置 null，跳过自动重启
-      if (_embeddedGatewayProcess == null) return;
+      if (_embeddedGatewayProcess != proc) return;
       if (code != 0 && _lastEmbeddedStderr.isEmpty) {
         _lastEmbeddedStderr = 'process exited with code $code';
       }
       if (state.mode == ConnectionMode.embedded &&
           state.status == ConnStatus.connected) {
-        // Gateway 意外退出，尝试自动重启
         _ensureEmbeddedGatewayRunning();
       }
     });
@@ -894,13 +922,23 @@ echo "NO_METHOD"
     // 等待就绪（最长 15s），同时检查进程是否还在运行
     for (int i = 0; i < 15; i++) {
       await Future.delayed(const Duration(seconds: 1));
-      // 进程已退出（端口被占用或启动失败），不再等待
       if (_embeddedGatewayExited) {
         break;
       }
-      if (await _checkHealth(state.port)) return true;
+      if (await _checkHealth(state.port)) { _restartingEmbedded = false; return true; }
     }
+    _restartingEmbedded = false;
     return false;
+  }
+
+  Future<bool> restartEmbeddedGateway() async {
+    if (state.mode != ConnectionMode.embedded) return false;
+    _embeddedGatewayExited = false;
+    final oldProcess = _embeddedGatewayProcess;
+    _embeddedGatewayProcess = null;
+    oldProcess?.kill();
+    await Future.delayed(const Duration(milliseconds: 500));
+    return _ensureEmbeddedGatewayRunning();
   }
 
   Future<void> switchToRemote(SshConfig config) async {
@@ -909,16 +947,19 @@ echo "NO_METHOD"
 
   Future<void> disconnect() async {
     _embeddedGatewayExited = false;
-    _embeddedGatewayProcess?.kill();
+    // 先置 null 再杀进程，防止 exitCode.then 触发自动重启
+    final oldProcess = _embeddedGatewayProcess;
     _embeddedGatewayProcess = null;
+    oldProcess?.kill();
     await Future.wait([
       _remoteBridge.disconnect(),
       _wslBridge.disconnect(),
       _embeddedBridge.disconnect(),
     ]);
-    // 清理内嵌模式锁文件，防止下次启动报 "runtime lock already held"
+    // 清理内嵌模式锁文件，先杀残留进程再删锁
     final userHome = Platform.environment['USERPROFILE'] ?? '';
-    for (final lock in ['gateway.lock', 'runtime.lock', 'hermes.pid']) {
+    await Process.run('taskkill', ['/F', '/IM', 'hermes.exe']);
+    for (final lock in ['gateway.lock', 'runtime.lock', 'hermes.pid', 'auth.lock']) {
       final f = File('$userHome\\.hermes\\$lock');
       if (await f.exists()) try { await f.delete(); } catch (_) {}
     }
@@ -938,7 +979,13 @@ echo "NO_METHOD"
               await _reconnectRemote(c);
             }
           } else if (state.mode == ConnectionMode.embedded) {
-            await _ensureEmbeddedGatewayRunning();
+            final restarted = await _ensureEmbeddedGatewayRunning();
+            if (restarted && state.status != ConnStatus.connected) {
+              stateNotifier.value = state.copyWith(
+                status: ConnStatus.connected,
+                message: '内嵌模式',
+              );
+            }
           }
         }
       }
@@ -950,7 +997,6 @@ echo "NO_METHOD"
   String get gatewayUrl =>
       'http://localhost:${_tunnelPort > 0 ? _tunnelPort : state.port}';
 
-  /// 找一个空闲的本地端口给 SSH 隧道使用
   Future<int> _findFreePort() async {
     try {
       final server = await ServerSocket.bind(
@@ -961,7 +1007,7 @@ echo "NO_METHOD"
       await server.close();
       return port;
     } catch (_) {
-      return state.port + 1000; // fallback
+      return state.port + 1000;
     }
   }
 
@@ -983,7 +1029,7 @@ echo "NO_METHOD"
     _wslDistro = d;
     _wslBridge.setDistro(d);
     final config = await ConfigService().readDesktopConfig();
-    config['local'] ??= <String, dynamic>{};
+    if (!config.containsKey('local')) config['local'] = <String, dynamic>{};
     (config['local'] as Map<String, dynamic>)['wsl_distro'] = d;
     await ConfigService().writeDesktopConfig(config);
   }
@@ -1000,7 +1046,6 @@ echo "NO_METHOD"
       case ConnectionMode.local:
       case ConnectionMode.remote: {
         try {
-      // CPU: 读 /proc/stat 原始数据在 Dart 端计算，避免 awk 兼容问题
       final cpuR = await runShell("head -1 /proc/stat", allowFailure: true);
       double cpu = 0.0;
       final cpuLine = cpuR.stdout.trim();
@@ -1016,7 +1061,6 @@ echo "NO_METHOD"
         }
       }
 
-      // MEM
       final memR = await runShell(
         "free -m | awk '/^Mem:/ {printf \"MEM:%s|%s\\n\", \$3, \$2}'",
         allowFailure: true);
@@ -1028,7 +1072,6 @@ echo "NO_METHOD"
         memTotal = int.tryParse(parts.last) ?? 0;
       }
 
-      // DISK
       final diskR = await runShell(
         "df -h / | awk 'NR==2 {printf \"DISK:%s|%s\\n\", \$3, \$2}'",
         allowFailure: true);
@@ -1040,7 +1083,6 @@ echo "NO_METHOD"
         diskTotal = parts.length > 1 ? parts.last : '';
       }
 
-      // UPTIME
       final upR = await runShell(
         "uptime -p | awk '{printf \"UPTIME:%s\\n\", \$0}'",
         allowFailure: true);
@@ -1057,6 +1099,7 @@ echo "NO_METHOD"
       return {
         'cpu': 0.0,
         'memory': {'used': 0, 'total': 0},
+        'disk': {'used': '0B', 'total': '0B'},
         'uptime': 'unknown'
       };
     }
@@ -1075,22 +1118,23 @@ echo "NO_METHOD"
     return checkLocal();
   }
   Future<bool> startLocalGateway() async {
+    if (state.mode == ConnectionMode.embedded) {
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.connecting,
+        message: '启动内嵌 Gateway...',
+      );
+      final ok = await _ensureEmbeddedGatewayRunning();
+      stateNotifier.value = state.copyWith(
+        status: ok ? ConnStatus.connected : ConnStatus.error,
+        message: ok ? '内嵌模式' : '内嵌 Gateway 启动失败',
+      );
+      return ok;
+    }
     if (state.mode == ConnectionMode.remote && _remoteExecutor.tunnelEstablished) {
       await _startRemoteGateway();
       await Future.delayed(const Duration(seconds: 5));
     }
     return checkLocal();
-  }
-
-  /// 杀死当前内嵌 Gateway 并直接重启
-  Future<bool> restartEmbeddedGateway() async {
-    if (state.mode != ConnectionMode.embedded) return false;
-    _embeddedGatewayExited = false;
-    _embeddedGatewayProcess?.kill();
-    _embeddedGatewayProcess = null;
-    // 等旧进程完全退出释放端口
-    await Future.delayed(const Duration(milliseconds: 500));
-    return _ensureEmbeddedGatewayRunning();
   }
 
   Future<String> downloadHermesBundle(
@@ -1149,7 +1193,6 @@ echo "NO_METHOD"
     }
   }
 
-  /// 确保 desktop_config.json 中存在 api_key，不存在则自动生成
   Future<String> _ensureApiKey() async {
     final config = await ConfigService().readDesktopConfig();
     var key = config['api_key'] as String?;
@@ -1177,6 +1220,5 @@ class SshConfigWrapper extends SshConfig {
           keyPath: c.keyPath,
           password: c.password,
         );
-
-  bool get useKeyAuth => false;
 }
+

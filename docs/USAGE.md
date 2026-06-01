@@ -21,11 +21,11 @@ The mode-specific behavior is isolated in bridge implementations:
 
 ## 2. First Launch and Setup
 
-On first launch, setup flow asks user to choose connection mode and fill required config.
+On first launch, the app auto-detects the environment:
 
-- Local mode: select WSL distro and local gateway context.
-- Embedded mode: use bundled runtime on Windows.
-- Remote mode: fill SSH host/port/user/auth and test connectivity.
+1. Checks WSL for Hermes → selects local mode
+2. Checks for embedded hermes.exe → selects embedded mode
+3. If neither found, shows setup wizard
 
 After setup is saved, app reconnects with the selected mode and refreshes runtime context.
 
@@ -39,6 +39,9 @@ When switching mode in Settings, `ConnectionManager` applies connection context 
 - update current server id
 
 This ensures mode switching does not require UI/business layer branching.
+
+For local mode, if the gateway is already running and the API_SERVER_KEY hasn't changed,
+the restart is skipped.
 
 ## 4. Data Isolation Rules
 
@@ -71,9 +74,8 @@ Do not write unescaped `"$HOME"` in Dart string literals.
 
 ### Build succeeds but analyze has warnings
 
-Current repository contains historical warnings not introduced by bridge refactor.
+Current repository contains historical warnings not introduced by recent changes.
 Focus blocking issues first:
 
 - Dart `error`
 - build failure
-

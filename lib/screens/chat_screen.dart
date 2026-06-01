@@ -720,7 +720,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.surfaceContainerLow,
-        title: Text(_activeSession?.title ?? '新对话'),
+        title: Text(_activeSession?.displayTitle ?? '新对话'),
         actions: [
           if (_activeSession != null)
             IconButton(
@@ -1430,18 +1430,6 @@ class _SessionItem extends StatelessWidget {
                                 selected ? FontWeight.w700 : FontWeight.w400,
                           ),
                         ),
-                        if (session.remark != null && session.remark!.isNotEmpty) ...[
-                          const SizedBox(height: 1),
-                          Text(
-                            session.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
                         if (session.preview != null) ...[
                           SizedBox(height: 2),
                           Text(
