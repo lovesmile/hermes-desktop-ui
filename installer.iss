@@ -18,7 +18,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
-SetupIconFile=assets\icon.ico
+SetupIconFile=windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\hermes_desktop.exe
 
 [Languages]
