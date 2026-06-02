@@ -23,6 +23,7 @@ UninstallDisplayIcon={app}\hermes_desktop.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "installer\Languages\ChineseSimplified.isl"
 
 [Files]
 ; Desktop 主程序
