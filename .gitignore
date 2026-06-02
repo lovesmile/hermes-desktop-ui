@@ -24,6 +24,9 @@ Thumbs.db
 # Claude Code
 .claude/
 
+# Ignore literal ~ directory (accidental home directory copy)
+~
+
 # PyInstaller build artifacts
 dist/
 *.spec
