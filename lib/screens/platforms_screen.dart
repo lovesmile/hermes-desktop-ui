@@ -112,12 +112,6 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
       appBar: AppBar(
         title: const Text('平台管理'),
         actions: [
-          TextButton.icon(
-            onPressed: _restartGateway,
-            icon: const Icon(Icons.restart_alt, size: 18),
-            label: const Text('重启 Gateway'),
-            style: TextButton.styleFrom(foregroundColor: AppTheme.warning),
-          ),
           const SizedBox(width: 8),
         ],
       ),
@@ -1009,8 +1003,9 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
                   }
                   setState(() => _dialogError = '');
                   widget.onSaved();
+                  GatewayService().restartGateway();
                 },
-                child: const Text('保存配置'),
+                child: const Text('保存并重启 Gateway'),
               ),
             ),
           ],

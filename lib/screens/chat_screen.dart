@@ -505,9 +505,28 @@ class _ChatScreenState extends State<ChatScreen> {
     _interrupted = false;
 
     // ★ 记录发消息时的会话 ID
-    final sessionIdAtSend = _activeSession?.id;
+    String? sessionIdAtSend = _activeSession?.id;
+    final bool isNewSession = sessionIdAtSend == null;
 
-    if (sessionIdAtSend != null) {
+    if (isNewSession) {
+      // ★ 无激活会话：立即创建本地会话，无论成功失败都保留用户消息
+      final localId = '${DateTime.now().microsecondsSinceEpoch}';
+      sessionIdAtSend = localId;
+      final title = '${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().day.toString().padLeft(2, '0')} ${text.length > 25 ? '${text.substring(0, 25)}...' : text}';
+      await _localDb.createSession(id: localId, title: title, userMessage: text);
+      final newSession = Session(
+        id: localId, title: title, source: 'cli',
+        createdAt: DateTime.now(), updatedAt: DateTime.now(),
+        messageCount: 1,
+        preview: text.length > 100 ? '${text.substring(0, 100)}...' : text,
+      );
+      _sessions.insert(0, newSession);
+      _displayedSessions.insert(0, newSession);
+      _messageCache[localId] = [
+        _Message(text: text, isUser: true, timestamp: DateTime.now()),
+      ];
+      setState(() => _activeSession = newSession);
+    } else {
       // 已有会话：用户消息立即持久化
       await _localDb.addMessage(sessionIdAtSend, 'user', text);
       // 立即更新内存中的会话预览（显示用户刚发的消息）
@@ -533,7 +552,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final userMsg = _Message(text: text, isUser: true, timestamp: DateTime.now());
     if (sessionIdAtSend != null) {
       final cached = _messageCache[sessionIdAtSend];
-      if (cached != null) cached.add(userMsg);
+      if (cached != null && !isNewSession) cached.add(userMsg);
     }
     setState(() {
       if (sessionIdAtSend != null) _messages.add(userMsg);
@@ -633,15 +652,26 @@ class _ChatScreenState extends State<ChatScreen> {
                 final displayIdx = _displayedSessions.indexWhere((s) => s.id == sessionIdAtSend);
                 if (idx >= 0) _sessions[idx] = updated;
                 if (displayIdx >= 0) _displayedSessions[displayIdx] = updated;
+                _streamingContent = '';
+                _sending = false;
                 // 如果当前正好在看这个会话，显示回复
                 if (_activeSession?.id == sessionIdAtSend) {
                   _messages.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
-                  _streamingContent = '';
-                  _sending = false;
                 }
               });
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted) _skillNode.requestFocus();
+              });
+            }
+          } else if (sessionIdAtSend != null) {
+            // ── 已有会话但无响应内容（空回复、API 错误导致流中断等） ──
+            _streamSubscriptions.remove(sessionIdAtSend);
+            _streamingBuffers.remove(sessionIdAtSend);
+            _streamingSessions.remove(sessionIdAtSend);
+            if (mounted) {
+              setState(() {
+                _streamingContent = '';
+                _sending = false;
               });
             }
           }

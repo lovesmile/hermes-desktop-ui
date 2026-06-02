@@ -491,12 +491,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(
         title: const Text('设置'),
         actions: [
-          TextButton.icon(
-            onPressed: _restartGateway,
-            icon: const Icon(Icons.restart_alt, size: 18),
-            label: const Text('重启 Gateway'),
-            style: TextButton.styleFrom(foregroundColor: AppTheme.warning),
-          ),
           const SizedBox(width: 8),
         ],
       ),
@@ -1121,13 +1115,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: isRunning ? _restartGateway : null,
-                  icon: const Icon(Icons.restart_alt, size: 18),
-                  label: const Text('重启'),
-                ),
-              ),
             ],
           );
         },

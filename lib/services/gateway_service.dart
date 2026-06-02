@@ -309,23 +309,8 @@ class GatewayService {
     }
   }
 
-  /// 重启 Gateway 服务
-  /// - 内嵌模式：kill 进程，健康检查自动重启
-  /// - 本地/远程：通过系统命令重启（systemd → pkill + nohup）
+  /// 重启 Gateway 服务（统一入口，自动处理三种模式的状态管理）
   Future<bool> restartGateway() async {
-    final cm = ConnectionManager();
-    switch (cm.state.mode) {
-      case ConnectionMode.embedded:
-        return cm.restartEmbeddedGateway();
-      case ConnectionMode.local:
-      case ConnectionMode.remote: {
-        final result = await cm.runShell(
-          '${ConnectionManager.hermesBinShell}'
-          '${ConnectionManager.restartGatewayShell}',
-          allowFailure: true,
-        );
-        return result.exitCode == 0;
-      }
-    }
+    return ConnectionManager().restartGateway();
   }
 }

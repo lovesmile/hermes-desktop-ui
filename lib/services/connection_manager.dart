@@ -939,6 +939,41 @@ echo "NO_METHOD"
     return false;
   }
 
+  Future<bool> restartGateway() async {
+    final s = state;
+    stateNotifier.value = s.copyWith(
+      status: ConnStatus.connecting,
+      message: '正在重启...',
+    );
+    switch (s.mode) {
+      case ConnectionMode.embedded:
+        return restartEmbeddedGateway();
+      case ConnectionMode.local:
+      case ConnectionMode.remote:
+        final result = await runShell(
+          '${hermesBinShell}${restartGatewayShell}',
+          allowFailure: true,
+        );
+        for (int i = 0; i < 15; i++) {
+          await Future.delayed(const Duration(seconds: 1));
+          if (await _checkHealth(state.port)) {
+            stateNotifier.value = state.copyWith(
+              status: ConnStatus.connected,
+              message: '在线',
+            );
+            return true;
+          }
+        }
+        stateNotifier.value = state.copyWith(
+          status: ConnStatus.error,
+          message: result.exitCode == 0
+              ? 'Gateway 重启后无响应'
+              : 'Gateway 重启命令执行失败',
+        );
+        return false;
+    }
+  }
+
   Future<bool> restartEmbeddedGateway() async {
     if (state.mode != ConnectionMode.embedded) return false;
     _embeddedGatewayExited = false;
@@ -946,7 +981,11 @@ echo "NO_METHOD"
     _embeddedGatewayProcess = null;
     oldProcess?.kill();
     await Future.delayed(const Duration(milliseconds: 500));
-    return _ensureEmbeddedGatewayRunning();
+    final ok = await _ensureEmbeddedGatewayRunning();
+    stateNotifier.value = ok
+        ? state.copyWith(status: ConnStatus.connected, message: '内嵌模式')
+        : state.copyWith(status: ConnStatus.error, message: '内嵌 Gateway 重启失败');
+    return ok;
   }
 
   Future<void> switchToRemote(SshConfig config) async {

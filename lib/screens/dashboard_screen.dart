@@ -150,6 +150,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  Future<void> _restartGateway() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重启 Gateway'),
+        content: const Text('确定要重启 Hermes Gateway 吗？这会导致短暂的连接中断。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确定重启')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      try {
+        await GatewayService().restartGateway();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Gateway 正在重启...')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('重启失败: $e')),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -165,6 +199,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             icon: const Icon(Icons.refresh),
             onPressed: () => _loadData(showLoading: true),
             tooltip: '刷新',
+          ),
+          IconButton(
+            icon: const Icon(Icons.restart_alt),
+            onPressed: _restartGateway,
+            tooltip: '重启 Gateway',
           ),
           const SizedBox(width: 8),
         ],
