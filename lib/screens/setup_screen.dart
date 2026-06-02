@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/config_service.dart';
 import '../services/connection_manager.dart';
+import '../services/gateway_service.dart';
 import 'models_screen.dart' as ms;
 
 /// A full-screen Material 3 setup wizard that guides the user through
@@ -373,6 +374,16 @@ class _SetupScreenState extends State<SetupScreen> {
         }
         await configService.writeEnvFile(envContent);
       }
+
+      // 重启 Gateway 使新配置生效
+      setState(() => _statusText = '正在重启 Gateway...');
+      final cm = ConnectionManager();
+      if (cm.state.mode == ConnectionMode.embedded) {
+        await cm.restartEmbeddedGateway();
+      } else {
+        await GatewayService().restartGateway();
+      }
+      await Future.delayed(const Duration(seconds: 1));
 
       if (!mounted) return;
       setState(() {
