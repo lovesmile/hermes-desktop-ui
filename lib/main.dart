@@ -47,10 +47,39 @@ void main() async {
   windowManager.show();
   windowManager.focus();
 
+  // Cleanup embedded hermes.exe / SSH tunnel on app exit
+  windowManager.addListener(_AppWindowListener());
+
   // init() reads config, starts health checks, and for remote mode
   // establishes SSH tunnel. Doing it after show() means the window
   // appears instantly while connection setup completes in parallel.
   await ConnectionManager().init();
+}
+
+class _AppWindowListener extends WindowListener {
+  @override
+  void onWindowClose() async {
+    await ConnectionManager().disconnect();
+  }
+
+  @override
+  void onWindowFocus() {}
+  @override
+  void onWindowBlur() {}
+  @override
+  void onWindowMinimize() {}
+  @override
+  void onWindowMaximize() {}
+  @override
+  void onWindowUnmaximize() {}
+  @override
+  void onWindowResize() {}
+  @override
+  void onWindowMove() {}
+  @override
+  void onWindowEnterFullScreen() {}
+  @override
+  void onWindowLeaveFullScreen() {}
 }
 
 class HermesDesktopApp extends StatefulWidget {
