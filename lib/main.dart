@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -42,14 +41,16 @@ void main() async {
     DeviceOrientation.landscapeRight,
   ]);
 
-  await ConnectionManager().init();
+  // Show window immediately — init runs in background so user sees UI faster
   runApp(HermesDesktopApp());
 
-  // Show window after first frame is rendered, avoiding white screen
-  SchedulerBinding.instance.addPostFrameCallback((_) {
-    windowManager.show();
-    windowManager.focus();
-  });
+  windowManager.show();
+  windowManager.focus();
+
+  // init() reads config, starts health checks, and for remote mode
+  // establishes SSH tunnel. Doing it after show() means the window
+  // appears instantly while connection setup completes in parallel.
+  await ConnectionManager().init();
 }
 
 class HermesDesktopApp extends StatefulWidget {
@@ -420,5 +421,3 @@ class MainShellState extends State<MainShell> {
     );
   }
 }
-
-
