@@ -62,6 +62,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _onConnectionChanged() {
+    if (mounted) setState(() {});
     if (_cm.state.status == ConnStatus.connected) {
       _loadData();
     }

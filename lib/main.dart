@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
@@ -18,8 +20,26 @@ import 'screens/setup_screen.dart';
 import 'screens/file_browser_screen.dart';
 import 'services/snack_service.dart';
 
+/// 单实例锁 — 绑定到本地端口，第二个实例绑定失败则退出
+RawServerSocket? _instanceLock;
+
+Future<bool> _tryLockInstance() async {
+  try {
+    final server = await RawServerSocket.bind('127.0.0.1', 49876, shared: false);
+    _instanceLock = server;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 防止多开 — 独占端口锁，如果绑定失败说明已有实例在运行
+  if (!await _tryLockInstance()) {
+    exit(0);
+  }
 
   await windowManager.ensureInitialized();
 
