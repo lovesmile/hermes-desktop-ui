@@ -41,9 +41,6 @@ Name: "{group}\{#MyAppName} (Hermes Gateway)"; Filename: "{app}\hermes\hermes.ex
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\hermes_desktop.exe"
 
-[Run]
-Filename: "{app}\hermes_desktop.exe"; Description: "启动 Hermes Desktop"; Flags: postinstall nowait skipifsilent shellexec
-
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
 begin

@@ -179,38 +179,46 @@ class _SetupScreenState extends State<SetupScreen> {
     if (!mounted) return;
 
     if (!exeExists) {
-      // 未安装 → 自动下载+安装
-      setState(() => _statusText = '正在下载内嵌 Hermes...');
-      try {
-        final zipPath = await ConnectionManager().downloadHermesBundle(
-          ConnectionManager.defaultHermesDownloadUrl,
-          onProgress: (received, total) {
-            if (!mounted) return;
-            final pct = total > 0 ? (received * 100 ~/ total) : 0;
-            setState(() => _statusText = '正在下载内嵌 Hermes... $pct%');
-          },
-        );
-        if (!mounted) return;
+      // 先检查安装包自带的 hermes.exe（{app}\hermes\hermes.exe）
+      final appDir = File(Platform.resolvedExecutable).parent.path;
+      final bundledExe = '$appDir\\hermes\\hermes.exe';
+      if (await File(bundledExe).exists()) {
+        await Directory(ConnectionManager().hermesBundlePath).create(recursive: true);
+        await File(bundledExe).copy(exePath);
+      } else {
+        // 未安装 → 自动下载+安装
+        setState(() => _statusText = '正在下载内嵌 Hermes...');
+        try {
+          final zipPath = await ConnectionManager().downloadHermesBundle(
+            ConnectionManager.defaultHermesDownloadUrl,
+            onProgress: (received, total) {
+              if (!mounted) return;
+              final pct = total > 0 ? (received * 100 ~/ total) : 0;
+              setState(() => _statusText = '正在下载内嵌 Hermes... $pct%');
+            },
+          );
+          if (!mounted) return;
 
-        setState(() => _statusText = '正在安装...');
-        await ConnectionManager().extractBundle(zipPath);
-        if (!mounted) return;
+          setState(() => _statusText = '正在安装...');
+          await ConnectionManager().extractBundle(zipPath);
+          if (!mounted) return;
 
-        // 验证安装结果
-        if (!await File(exePath).exists()) {
+          // 验证安装结果
+          if (!await File(exePath).exists()) {
+            setState(() {
+              _working = false;
+              _error = '安装失败：解压后未找到 hermes.exe';
+            });
+            return;
+          }
+        } catch (e) {
+          if (!mounted) return;
           setState(() {
             _working = false;
-            _error = '安装失败：解压后未找到 hermes.exe';
+            _error = '下载或安装失败: $e';
           });
           return;
         }
-      } catch (e) {
-        if (!mounted) return;
-        setState(() {
-          _working = false;
-          _error = '下载或安装失败: $e';
-        });
-        return;
       }
     }
 
