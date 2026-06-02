@@ -22,7 +22,6 @@ SetupIconFile=windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\hermes_desktop.exe
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
