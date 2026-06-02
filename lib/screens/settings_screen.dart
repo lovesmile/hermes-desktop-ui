@@ -71,6 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _prevConnStatus = state.status;
 
     setState(() {
+      _selectedMode = state.mode;
       _connectionMessage = state.message;
       _connectionSuccess = state.status == ConnStatus.connected;
     });

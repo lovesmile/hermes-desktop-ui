@@ -178,6 +178,16 @@ class _SetupScreenState extends State<SetupScreen> {
     final exeExists = await File(exePath).exists();
     if (!mounted) return;
 
+    // 如果内嵌模式已连接，不重复启动，直接进配置页
+    if (ConnectionManager().state.status == ConnStatus.connected &&
+        ConnectionManager().state.mode == ConnectionMode.embedded) {
+      setState(() {
+        _step = _WizardStep.configure;
+        _working = false;
+      });
+      return;
+    }
+
     if (!exeExists) {
       // 先检查安装包自带的 hermes.exe（{app}\hermes\hermes.exe）
       final appDir = File(Platform.resolvedExecutable).parent.path;
