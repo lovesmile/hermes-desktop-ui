@@ -220,6 +220,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final exePath = '${_cm.hermesBundlePath}\\hermes.exe';
     if (await File(exePath).exists()) return true;
 
+    // 检查安装包自带的 hermes.exe（{app}\hermes\hermes.exe）
+    final appDir = File(Platform.resolvedExecutable).parent.path;
+    final bundledExe = '$appDir\\hermes\\hermes.exe';
+    if (await File(bundledExe).exists()) {
+      await Directory(_cm.hermesBundlePath).create(recursive: true);
+      await File(bundledExe).copy(exePath);
+      return true;
+    }
+
     if (!mounted) return false;
     final ok = await showDialog<bool>(
       context: context,

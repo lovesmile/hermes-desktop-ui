@@ -806,31 +806,39 @@ echo "NO_METHOD"
     // 确保 hermes.exe 存在，否则自动下载
     final exePath = '$hermesBundlePath\\hermes.exe';
     if (!await File(exePath).exists()) {
-      stateNotifier.value = state.copyWith(
-        status: ConnStatus.connecting,
-        message: '正在下载内嵌 Hermes...',
-      );
-      try {
-        final zipPath = await downloadHermesBundle(defaultHermesDownloadUrl);
+      // 先检查安装包自带的 hermes.exe（{app}\hermes\hermes.exe）
+      final appDir = File(Platform.resolvedExecutable).parent.path;
+      final bundledExe = '$appDir\\hermes\\hermes.exe';
+      if (await File(bundledExe).exists()) {
+        await Directory(hermesBundlePath).create(recursive: true);
+        await File(bundledExe).copy(exePath);
+      } else {
         stateNotifier.value = state.copyWith(
           status: ConnStatus.connecting,
-          message: '正在安装...',
+          message: '正在下载内嵌 Hermes...',
         );
-        await extractBundle(zipPath);
-        try { await File(zipPath).delete(); } catch (_) {}
-        if (!await File(exePath).exists()) {
+        try {
+          final zipPath = await downloadHermesBundle(defaultHermesDownloadUrl);
+          stateNotifier.value = state.copyWith(
+            status: ConnStatus.connecting,
+            message: '正在安装...',
+          );
+          await extractBundle(zipPath);
+          try { await File(zipPath).delete(); } catch (_) {}
+          if (!await File(exePath).exists()) {
+            stateNotifier.value = state.copyWith(
+              status: ConnStatus.error,
+              message: '安装失败：解压后未找到 hermes.exe',
+            );
+            return;
+          }
+        } catch (e) {
           stateNotifier.value = state.copyWith(
             status: ConnStatus.error,
-            message: '安装失败：解压后未找到 hermes.exe',
+            message: '下载或安装失败: $e',
           );
           return;
         }
-      } catch (e) {
-        stateNotifier.value = state.copyWith(
-          status: ConnStatus.error,
-          message: '下载或安装失败: $e',
-        );
-        return;
       }
     }
 
