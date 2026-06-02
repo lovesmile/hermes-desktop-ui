@@ -25,6 +25,26 @@ jobs:
       - name: Build Flutter Windows release
         run: flutter build windows --release
 
+      - name: Bundle VC++ runtime DLLs for target machines without redist
+        shell: pwsh
+        run: |
+          # 从 VS 安装目录复制 VC++ CRT DLL 到构建输出
+          # 这样 Inno Setup 打包时会一并包含，目标机无需单独装 VC++ redist
+          $redistDir = Resolve-Path "C:\Program Files\Microsoft Visual Studio\2022\*\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" | Select-Object -First 1
+          if ($redistDir) {
+            Copy-Item "$redistDir\msvcp140.dll"    -Destination build\windows\x64\runner\Release\
+            Copy-Item "$redistDir\msvcp140_1.dll"  -Destination build\windows\x64\runner\Release\
+            Copy-Item "$redistDir\vcruntime140.dll" -Destination build\windows\x64\runner\Release\
+            Copy-Item "$redistDir\vcruntime140_1.dll" -Destination build\windows\x64\runner\Release\
+            Write-Output "Copied VC++ CRT DLLs from $redistDir"
+          } else {
+            Write-Output "VC++ redist not found, trying System32 fallback..."
+            Copy-Item C:\Windows\System32\msvcp140.dll    -Destination build\windows\x64\runner\Release\ -ErrorAction SilentlyContinue
+            Copy-Item C:\Windows\System32\msvcp140_1.dll  -Destination build\windows\x64\runner\Release\ -ErrorAction SilentlyContinue
+            Copy-Item C:\Windows\System32\vcruntime140.dll -Destination build\windows\x64\runner\Release\ -ErrorAction SilentlyContinue
+            Copy-Item C:\Windows\System32\vcruntime140_1.dll -Destination build\windows\x64\runner\Release\ -ErrorAction SilentlyContinue
+          }
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
