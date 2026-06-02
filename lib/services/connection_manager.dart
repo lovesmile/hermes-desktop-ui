@@ -964,12 +964,14 @@ echo "NO_METHOD"
       _wslBridge.disconnect(),
       _embeddedBridge.disconnect(),
     ]);
-    // 清理内嵌模式锁文件，先杀残留进程再删锁
-    final userHome = Platform.environment['USERPROFILE'] ?? '';
-    await Process.run('taskkill', ['/F', '/IM', 'hermes.exe']);
-    for (final lock in ['gateway.lock', 'runtime.lock', 'hermes.pid', 'auth.lock']) {
-      final f = File('$userHome\\.hermes\\$lock');
-      if (await f.exists()) try { await f.delete(); } catch (_) {}
+    // 只有内嵌模式才杀 hermes.exe，本地/远程模式不要动服务端进程
+    if (state.mode == ConnectionMode.embedded) {
+      await Process.run('taskkill', ['/F', '/IM', 'hermes.exe']);
+      final userHome = Platform.environment['USERPROFILE'] ?? '';
+      for (final lock in ['gateway.lock', 'runtime.lock', 'hermes.pid', 'auth.lock']) {
+        final f = File('$userHome\\.hermes\\$lock');
+        if (await f.exists()) try { await f.delete(); } catch (_) {}
+      }
     }
     _tunnelPort = 0;
     stateNotifier.value = state.copyWith(status: ConnStatus.disconnected);
