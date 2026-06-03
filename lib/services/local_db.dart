@@ -217,12 +217,23 @@ class LocalDatabase {
     return DateTime.now();
   }
 
-  String? _getPreview(List? messages) {
-    if (messages == null || messages.isEmpty) return null;
-    // 取最后一条消息（无论 user 还是 assistant）
-    final last = messages.last as Map<String, dynamic>? ?? {};
-    final c = last['content'] as String? ?? '';
-    if (c.isNotEmpty) return c.length > 100 ? '${c.substring(0, 100)}...' : c;
-    return null;
+  String _getPreview(List? messages) {
+    if (messages == null || messages.isEmpty) return '';
+    // 倒序找第一个有非空内容的消息，兼容 content 为 String/Map 等多种格式
+    for (int i = messages.length - 1; i >= 0; i--) {
+      final m = messages[i] as Map<String, dynamic>? ?? {};
+      final raw = m['content'];
+      String text;
+      if (raw is String) {
+        text = raw;
+      } else if (raw is Map) {
+        text = raw.toString();
+      } else {
+        text = raw?.toString() ?? '';
+      }
+      text = text.trim();
+      if (text.isNotEmpty) return text.length > 100 ? '${text.substring(0, 100)}...' : text;
+    }
+    return '';
   }
 }

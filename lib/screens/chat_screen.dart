@@ -1497,19 +1497,19 @@ class _SessionItem extends StatelessWidget {
                                 selected ? FontWeight.w500 : FontWeight.w400,
                           ),
                         ),
-                        if (session.preview != null) ...[
-                          SizedBox(height: 2),
-                          Text(
-                            session.preview!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                fontSize: 11,
-                                    color: selected
-                                        ? Theme.of(context).colorScheme.onSurfaceVariant
-                                        : Theme.of(context).colorScheme.onSurfaceVariant),
-                          ),
-                        ],
+                        SizedBox(height: 2),
+                        Text(
+                          session.preview?.isNotEmpty == true
+                              ? session.preview!
+                              : '暂无消息',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: selected
+                                  ? Theme.of(context).colorScheme.onSurfaceVariant
+                                  : Theme.of(context).colorScheme.onSurfaceVariant),
+                        ),
                       ],
                     ),
                   ),
