@@ -744,7 +744,7 @@ echo "NO_METHOD"
     final localApiKey = await _ensureApiKey();
     // 如果 gateway 已在运行且 API_SERVER_KEY 一致，跳过重启
     bool restartOk = true;
-    final alreadyHealthy = await checkLocal();
+    final alreadyHealthy = await _checkHealth(state.port);
     if (!alreadyHealthy) {
       restartOk = await _restartLocalGatewayShell(localApiKey);
       await Future.delayed(const Duration(seconds: 3));
@@ -759,11 +759,19 @@ echo "NO_METHOD"
     }
 
     await _applyConnectionContext(namespace: 'local', serverId: 'local');
-    final healthy = await checkLocal();
-    if (!healthy || !restartOk) {
+    if (restartOk) {
+      // 等待 gateway 就绪（最长 20s），不设 error — 健康检查会兜底
+      for (int i = 0; i < 20; i++) {
+        await Future.delayed(const Duration(seconds: 1));
+        if (await _checkHealth(state.port)) {
+          stateNotifier.value = state.copyWith(status: ConnStatus.connected, message: '连接成功');
+          return;
+        }
+      }
+    } else {
       stateNotifier.value = state.copyWith(
         status: ConnStatus.error,
-        message: restartOk ? '本地 Gateway 启动后无响应' : '本地 Gateway 重启失败：未找到 hermes 命令，请检查 WSL 中 hermes 是否安装',
+        message: '本地 Gateway 重启失败：未找到 hermes 命令，请检查 WSL 中 hermes 是否安装',
       );
     }
   }
@@ -954,7 +962,16 @@ echo "NO_METHOD"
           '${hermesBinShell}${restartGatewayShell}',
           allowFailure: true,
         );
-        for (int i = 0; i < 15; i++) {
+        // Shell 本身执行失败 → 真错误
+        if (result.exitCode != 0) {
+          stateNotifier.value = state.copyWith(
+            status: ConnStatus.error,
+            message: 'Gateway 重启命令执行失败',
+          );
+          return false;
+        }
+        // Shell 成功，等待 gateway 恢复（最长 30s）
+        for (int i = 0; i < 30; i++) {
           await Future.delayed(const Duration(seconds: 1));
           if (await _checkHealth(state.port)) {
             stateNotifier.value = state.copyWith(
@@ -964,12 +981,7 @@ echo "NO_METHOD"
             return true;
           }
         }
-        stateNotifier.value = state.copyWith(
-          status: ConnStatus.error,
-          message: result.exitCode == 0
-              ? 'Gateway 重启后无响应'
-              : 'Gateway 重启命令执行失败',
-        );
+        // 超时但命令已执行成功 — 不设 error，保留 connecting，健康检查会继续尝试
         return false;
     }
   }
@@ -982,9 +994,12 @@ echo "NO_METHOD"
     oldProcess?.kill();
     await Future.delayed(const Duration(milliseconds: 500));
     final ok = await _ensureEmbeddedGatewayRunning();
-    stateNotifier.value = ok
-        ? state.copyWith(status: ConnStatus.connected, message: '内嵌模式')
-        : state.copyWith(status: ConnStatus.error, message: '内嵌 Gateway 重启失败');
+    if (ok) {
+      stateNotifier.value = state.copyWith(status: ConnStatus.connected, message: '内嵌模式');
+    } else if (_embeddedGatewayExited) {
+      stateNotifier.value = state.copyWith(status: ConnStatus.error, message: '内嵌 Gateway 启动失败');
+    }
+    // 进程还在运行但未响应 → 保留 connecting，健康检查会继续尝试
     return ok;
   }
 

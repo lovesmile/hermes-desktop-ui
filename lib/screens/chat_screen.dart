@@ -622,9 +622,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 _streamingContent = '';
                 _sending = false;
               });
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) _skillNode.requestFocus();
-              });
             }
           } else if (sessionIdAtSend != null && response.isNotEmpty) {
             // ── 已有会话：存 AI 回复 ──
@@ -659,9 +656,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   _messages.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
                 }
               });
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) _skillNode.requestFocus();
-              });
             }
           } else if (sessionIdAtSend != null) {
             // ── 已有会话但无响应内容（空回复、API 错误导致流中断等） ──
@@ -687,9 +681,6 @@ class _ChatScreenState extends State<ChatScreen> {
               _messages.add(_Message(text: '⚠️ 发送失败: $e', isUser: false, timestamp: DateTime.now(), isError: true));
               _sending = false;
               _streamingContent = '';
-            });
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _skillNode.requestFocus();
             });
           }
         },
@@ -718,9 +709,6 @@ class _ChatScreenState extends State<ChatScreen> {
       // 不在这里设置 _sending = false，由 onDone 处理
       if (mounted) {
         setState(() => _attachedFiles.clear());
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _skillNode.requestFocus();
-        });
       }
     }
   }
@@ -1182,7 +1170,6 @@ class _ChatScreenState extends State<ChatScreen> {
                           skill['name'] ?? '',
                           style: TextStyle(
                             fontSize: 13,
-                            fontWeight: FontWeight.w600,
                           ),
                         ),
                         if ((skill['description'] ?? '').isNotEmpty)
@@ -1457,7 +1444,7 @@ class _SessionItem extends StatelessWidget {
                                 ? Theme.of(context).colorScheme.onSurface
                                 : Theme.of(context).colorScheme.onSurface,
                             fontWeight:
-                                selected ? FontWeight.w700 : FontWeight.w400,
+                                selected ? FontWeight.w500 : FontWeight.w400,
                           ),
                         ),
                         if (session.preview != null) ...[

@@ -74,7 +74,7 @@ class StatsCard extends StatelessWidget {
                 value,
                 style: TextStyle(
                   fontSize: 28 * fontScale,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w500,
                   color: accentColor,
                 ),
               ),

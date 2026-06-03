@@ -555,7 +555,7 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('添加定时任务',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500)),
                   const SizedBox(height: 20),
                   TextField(
                     controller: nameController,
@@ -959,7 +959,7 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('编辑定时任务',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500)),
                   const SizedBox(height: 20),
                   TextField(
                     controller: nameController,
@@ -1244,7 +1244,7 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
                 Expanded(
                   child: Row(
                     children: [
-                      Flexible(child: Text(job.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+                      Flexible(child: Text(job.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500))),
                       const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -1323,7 +1323,7 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
                 Expanded(
                   child: Row(
                     children: [
-                      Flexible(child: Text(job.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+                      Flexible(child: Text(job.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500))),
                       const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),

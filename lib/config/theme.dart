@@ -84,18 +84,18 @@ class AppTheme {
       headlineLarge: _textStyle(brightness, 32, FontWeight.w400, 0),
       headlineMedium: _textStyle(brightness, 28, FontWeight.w400, 0),
       headlineSmall: _textStyle(brightness, 24, FontWeight.w400, 0),
-      // Title
-      titleLarge: _textStyle(brightness, 22, FontWeight.w500, 0),
-      titleMedium: _textStyle(brightness, 16, FontWeight.w500, 0.15),
-      titleSmall: _textStyle(brightness, 14, FontWeight.w500, 0.1),
+      // Title (统一用 w400，和 body 一致)
+      titleLarge: _textStyle(brightness, 22, FontWeight.w400, 0),
+      titleMedium: _textStyle(brightness, 16, FontWeight.w400, 0.15),
+      titleSmall: _textStyle(brightness, 14, FontWeight.w400, 0.1),
       // Body
       bodyLarge: _textStyle(brightness, 16, FontWeight.w400, 0.5),
       bodyMedium: _textStyle(brightness, 14, FontWeight.w400, 0.25),
       bodySmall: _textStyle(brightness, 12, FontWeight.w400, 0.4),
-      // Label
-      labelLarge: _textStyle(brightness, 14, FontWeight.w500, 0.1),
-      labelMedium: _textStyle(brightness, 12, FontWeight.w500, 0.5),
-      labelSmall: _textStyle(brightness, 11, FontWeight.w500, 0.5),
+      // Label (统一 w400)
+      labelLarge: _textStyle(brightness, 14, FontWeight.w400, 0.1),
+      labelMedium: _textStyle(brightness, 12, FontWeight.w400, 0.5),
+      labelSmall: _textStyle(brightness, 11, FontWeight.w400, 0.5),
     );
   }
 
@@ -159,7 +159,7 @@ class AppTheme {
         labelStyle: TextStyle(
           fontSize: 12,
           color: scheme.onSurface,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w400,
         ),
         secondaryLabelStyle: TextStyle(
           fontSize: 12,
@@ -250,7 +250,7 @@ class AppTheme {
         titleTextStyle: TextStyle(
           color: scheme.onSurface,
           fontSize: 22,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w400,
           letterSpacing: 0,
         ),
       ),

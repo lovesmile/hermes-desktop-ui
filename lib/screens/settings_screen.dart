@@ -787,7 +787,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     title,
                     style: TextStyle(
                       fontSize: 14,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      fontWeight: selected ? FontWeight.w500 : FontWeight.w400,
                       color: selected
                           ? colorScheme.primary
                           : colorScheme.onSurface,
@@ -1137,7 +1137,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title,
               style: const TextStyle(
                 fontSize: 16,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w500,
               ),
             ),
             SizedBox(height: 12),

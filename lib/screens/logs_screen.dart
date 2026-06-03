@@ -341,7 +341,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                   fontSize: 10,
                   fontFamily: 'monospace',
                   color: _levelColor(log.level),
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),

@@ -320,7 +320,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 Text('模型配置',
                                     style: TextStyle(
                                         fontSize: 14,
-                                        fontWeight: FontWeight.w600,
+                                        fontWeight: FontWeight.w500,
                                         color: cs.onSurface)),
                                 const SizedBox(height: 12),
                                 _infoRow('当前模型', _currentModel, cs),
@@ -480,7 +480,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Text('机器状态',
                   style: TextStyle(
                       fontSize: 14,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w500,
                       color: cs.onSurface)),
               const SizedBox(height: 12),
               Row(
@@ -505,7 +505,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Text('机器状态',
                 style: TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w500,
                     color: cs.onSurface)),
             const SizedBox(height: 12),
             Row(
@@ -564,7 +564,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Icon(Icons.cloud_off, size: 64, color: cs.onSurfaceVariant),
           const SizedBox(height: 16),
           Text('Hermes Gateway 未运行',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: cs.onSurface)),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500, color: cs.onSurface)),
           const SizedBox(height: 8),
           Text('请确保 Hermes Gateway 已启动 (hermes gateway run)',
               style: TextStyle(color: cs.onSurfaceVariant)),

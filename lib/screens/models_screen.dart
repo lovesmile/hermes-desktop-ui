@@ -257,7 +257,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                               const Text('当前模型',
                                   style: TextStyle(
                                       fontSize: 16,
-                                      fontWeight: FontWeight.w600)),
+                                      fontWeight: FontWeight.w500)),
                             ],
                           ),
                           const SizedBox(height: 16),
@@ -323,7 +323,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                       Text(
                         '已安装技能 (${_skills.length})',
                         style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w600),
+                            fontSize: 16, fontWeight: FontWeight.w500),
                       ),
                     ],
                   ),
@@ -410,7 +410,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                                           skill['name'] ?? '',
                                           style: const TextStyle(
                                             fontSize: 14,
-                                            fontWeight: FontWeight.w600,
+                                            fontWeight: FontWeight.w500,
                                           ),
                                         ),
                                         if ((skill['description'] ?? '')

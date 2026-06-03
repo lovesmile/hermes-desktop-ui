@@ -160,7 +160,7 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
                     platform.name,
                     style: const TextStyle(
                       fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -272,7 +272,7 @@ class _PlatformsScreenState extends State<PlatformsScreen> {
                   line.replaceAll('#', '').trim(),
                   style: TextStyle(
                     fontSize: 16,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w500,
                     color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
@@ -830,7 +830,7 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
                   widget.platform.name,
                   style: const TextStyle(
                     fontSize: 22,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),

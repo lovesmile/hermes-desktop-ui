@@ -90,7 +90,6 @@ class ChatMessageWidget extends StatelessWidget {
                           color: scheme.tertiary,
                           fontSize: 13,
                           fontFamily: 'monospace',
-                          backgroundColor: isDark ? Colors.white10 : Colors.black12,
                         ),
                         codeblockDecoration: BoxDecoration(
                           color: isDark ? Colors.white10 : Colors.black12,
