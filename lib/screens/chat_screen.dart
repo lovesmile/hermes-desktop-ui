@@ -534,6 +534,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final updatedSession = Session(
         id: sessionIdAtSend,
         title: _activeSession?.title ?? '',
+        gatewaySessionId: _activeSession?.gatewaySessionId,
         source: _activeSession?.source ?? 'cli',
         createdAt: _activeSession?.createdAt ?? DateTime.now(),
         updatedAt: DateTime.now(),
@@ -561,7 +562,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
 
     try {
-      final stream = _gateway.chatStream(text, sessionId: sessionIdAtSend,
+      // ★ 用已存储的 Gateway session ID 发送，实现续聊
+      final gatewayIdForApi = _activeSession?.gatewaySessionId;
+      final stream = _gateway.chatStream(text, sessionId: gatewayIdForApi,
           attachments: _attachedFiles.isNotEmpty ? _attachedFiles : null);
 
       // ★ 如果此会话已有活跃流，先取消旧的（防止重复）
@@ -630,6 +633,10 @@ class _ChatScreenState extends State<ChatScreen> {
             _streamingBuffers.remove(sessionIdAtSend);
             _streamingSessions.remove(sessionIdAtSend);
             await _localDb.addMessage(sessionIdAtSend, 'assistant', response);
+            // ★ 保存 Gateway session ID 实现续聊
+            if (newSessionId != null && newSessionId.isNotEmpty) {
+              await _localDb.updateGatewaySessionId(sessionIdAtSend, newSessionId);
+            }
             final cached = _messageCache[sessionIdAtSend];
             if (cached != null) {
               cached.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
@@ -637,6 +644,7 @@ class _ChatScreenState extends State<ChatScreen> {
             // 更新列表预览
             final updated = Session(
               id: sessionIdAtSend, title: _activeSession?.title ?? '',
+              gatewaySessionId: newSessionId?.isNotEmpty == true ? newSessionId : _activeSession?.gatewaySessionId,
               source: 'cli',
               createdAt: _activeSession?.createdAt ?? DateTime.now(),
               updatedAt: DateTime.now(),
@@ -654,6 +662,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 // 如果当前正好在看这个会话，显示回复
                 if (_activeSession?.id == sessionIdAtSend) {
                   _messages.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
+                  // ★ 更新 _activeSession 保留 gatewaySessionId 便于下次续聊
+                  _activeSession = updated;
                 }
               });
             }

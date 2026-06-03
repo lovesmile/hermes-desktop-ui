@@ -68,6 +68,7 @@ class LocalDatabase {
         id: s['id'] as String? ?? entry.key,
         title: s['title'] as String? ?? '',
         remark: s['remark'] as String?,
+        gatewaySessionId: s['gateway_session_id'] as String?,
         source: s['source'] as String? ?? 'cli',
         createdAt: _parseDate(s['created_at']),
         updatedAt: _parseDate(s['updated_at']),
@@ -99,6 +100,7 @@ class LocalDatabase {
       id: s['id'] as String? ?? sessionId,
       title: s['title'] as String? ?? '',
       remark: s['remark'] as String?,
+      gatewaySessionId: s['gateway_session_id'] as String?,
       source: s['source'] as String? ?? 'cli',
       createdAt: _parseDate(s['created_at']),
       updatedAt: _parseDate(s['updated_at']),
@@ -181,6 +183,16 @@ class LocalDatabase {
     } else {
       session.remove('remark');
     }
+    await _write(db);
+  }
+
+  /// 更新会话的 Gateway session ID（续聊用）
+  Future<void> updateGatewaySessionId(String localSessionId, String gatewaySessionId) async {
+    final db = await _read();
+    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
+    final session = sessionsMap[localSessionId] as Map<String, dynamic>?;
+    if (session == null) return;
+    session['gateway_session_id'] = gatewaySessionId;
     await _write(db);
   }
 

@@ -2,6 +2,7 @@ class Session {
   final String id;
   final String title;
   final String? remark;
+  final String? gatewaySessionId;
   final String source; // cli, telegram, discord, slack, etc.
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -14,6 +15,7 @@ class Session {
     required this.id,
     required this.title,
     this.remark,
+    this.gatewaySessionId,
     required this.source,
     required this.createdAt,
     required this.updatedAt,
@@ -21,11 +23,12 @@ class Session {
     this.preview,
   });
 
-  Session copyWith({String? remark}) {
+  Session copyWith({String? remark, String? gatewaySessionId}) {
     return Session(
       id: id,
       title: title,
       remark: remark ?? this.remark,
+      gatewaySessionId: gatewaySessionId ?? this.gatewaySessionId,
       source: source,
       createdAt: createdAt,
       updatedAt: updatedAt,
@@ -39,6 +42,7 @@ class Session {
       id: json['id'] ?? '',
       title: json['title'] ?? json['name'] ?? '未命名会话',
       remark: json['remark'] as String?,
+      gatewaySessionId: json['gateway_session_id'] as String?,
       source: json['source'] ?? 'cli',
       createdAt: _parseDate(json['created_at'] ?? json['createdAt']),
       updatedAt: _parseDate(json['updated_at'] ?? json['updatedAt']),
@@ -51,6 +55,7 @@ class Session {
         'id': id,
         'title': title,
         if (remark != null) 'remark': remark,
+        if (gatewaySessionId != null) 'gateway_session_id': gatewaySessionId,
         'source': source,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
