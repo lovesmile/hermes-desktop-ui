@@ -40,6 +40,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
   bool _loadingMessages = false;
   String _streamingContent = '';
+  Timer? _streamThrottleTimer; // 流式 UI 节流，防止频繁 setState 卡死
   bool _interrupted = false; // 被新消息中断的标志
   final List<Map<String, String>> _attachedFiles = [];
 
@@ -48,6 +49,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // 取消当前活跃的流式回复
   void _cancelCurrentChat() {
+    _streamThrottleTimer?.cancel();
     // 取消所有活跃订阅
     for (final entry in _streamSubscriptions.entries) {
       entry.value.cancel();
@@ -176,6 +178,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _gateway.disconnectChat();
+    _streamThrottleTimer?.cancel();
     // ★ 取消所有并行流的订阅
     for (final sub in _streamSubscriptions.values) {
       sub.cancel();
@@ -578,17 +581,28 @@ class _ChatScreenState extends State<ChatScreen> {
       // ★ 用 listen 替代 await for，实现并行流
       final sub = stream.listen(
         (chunk) {
-          // 累积到 buffer — 新会话用 __pending__ 占位，已有会话用 sessionId
+          // 累积到 buffer
           final sid = sessionIdAtSend ?? '__pending__';
           _streamingBuffers[sid] = (_streamingBuffers[sid] ?? '') + chunk;
-          // 仅当此会话是当前激活会话时更新 UI
+          // 仅当此会话是当前激活会话时更新 UI（节流到 ~300ms 防卡死）
           if (_activeSession?.id == sid && mounted) {
-            setState(() => _streamingContent = _streamingBuffers[sid]!);
-            _scrollToBottom();
+            if (_streamThrottleTimer == null || !_streamThrottleTimer!.isActive) {
+              _streamThrottleTimer?.cancel();
+              _streamThrottleTimer = Timer(const Duration(milliseconds: 300), () {
+                if (!mounted) return;
+                // 确保节流触发时还是同一个会话
+                if (_activeSession?.id != sid) return;
+                // ★ 限制 UI 显示的流式内容长度（超过 8000 字截头留尾，防 MarkdownBody 卡死）
+                final full = _streamingBuffers[sid] ?? '';
+                setState(() => _streamingContent = full.length > 8000 ? '...（内容过长，收尾中）\n\n${full.substring(full.length - 8000)}' : full);
+                _scrollToBottom();
+              });
+            }
           }
         },
         onDone: () async {
           if (!mounted) return;
+          _streamThrottleTimer?.cancel();
           final newSessionId = _gateway.lastSessionId;
           // 读 buffer（新会话从 __pending__ 取，已有会话从 sessionId 取）
           final bufferKey = sessionIdAtSend ?? '__pending__';
@@ -681,6 +695,7 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         },
         onError: (e) {
+          _streamThrottleTimer?.cancel();
           // 清理
           final sid = sessionIdAtSend ?? '__pending__';
           _streamSubscriptions.remove(sid);
