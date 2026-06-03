@@ -40,7 +40,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
   bool _loadingMessages = false;
   String _streamingContent = '';
-  Timer? _streamThrottleTimer; // 流式 UI 节流，防止频繁 setState 卡死
+  Timer? _streamThrottleTimer;
+  int _segmentsCommitted = 0; // 已提交为独立消息的字符数，超 2000 自动分段
+  static const int _segmentMaxLen = 2000;
   bool _interrupted = false; // 被新消息中断的标志
   final List<Map<String, String>> _attachedFiles = [];
 
@@ -61,7 +63,8 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _streamingContent = '';
         _sending = false;
-        _interrupted = true; // 标记为被中断
+        _interrupted = true;
+        _segmentsCommitted = 0;
       });
     }
   }
@@ -319,11 +322,19 @@ class _ChatScreenState extends State<ChatScreen> {
           text = content?.toString() ?? '';
         }
         if (text.trim().isEmpty) continue;
-        messages.add(_Message(
-          text: text,
-          isUser: role == 'user',
-          timestamp: ts,
-        ));
+        if (role != 'user' && text.length > _segmentMaxLen) {
+          // ★ AI 长回复分段显示，每段不超过 2000 字
+          for (int i = 0; i < text.length; i += _segmentMaxLen) {
+            final end = (i + _segmentMaxLen < text.length) ? i + _segmentMaxLen : text.length;
+            messages.add(_Message(text: text.substring(i, end), isUser: false, timestamp: ts));
+          }
+        } else {
+          messages.add(_Message(
+            text: text,
+            isUser: role == 'user',
+            timestamp: ts,
+          ));
+        }
       }
       // 写入缓存
       _messageCache[_activeSession!.id] = messages;
@@ -562,6 +573,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (sessionIdAtSend != null) _messages.add(userMsg);
       _sending = true;
     });
+    _segmentsCommitted = 0;
     _scrollToBottom();
 
     try {
@@ -592,9 +604,17 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (!mounted) return;
                 // 确保节流触发时还是同一个会话
                 if (_activeSession?.id != sid) return;
-                // ★ 限制 UI 显示的流式内容长度（超过 8000 字截头留尾，防 MarkdownBody 卡死）
                 final full = _streamingBuffers[sid] ?? '';
-                setState(() => _streamingContent = full.length > 8000 ? '...（内容过长，收尾中）\n\n${full.substring(full.length - 8000)}' : full);
+                setState(() {
+                  // ★ 超过 2000 字自动分段，每段作为独立消息
+                  while (full.length - _segmentsCommitted >= _segmentMaxLen) {
+                    final seg = full.substring(_segmentsCommitted, _segmentsCommitted + _segmentMaxLen);
+                    _messages.add(_Message(text: seg, isUser: false, timestamp: DateTime.now()));
+                    _segmentsCommitted += _segmentMaxLen;
+                  }
+                  _streamingContent = full.substring(_segmentsCommitted);
+                });
+                _scrollToBottom();
                 _scrollToBottom();
               });
             }
@@ -673,12 +693,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (displayIdx >= 0) _displayedSessions[displayIdx] = updated;
                 _streamingContent = '';
                 _sending = false;
-                // 如果当前正好在看这个会话，显示回复
+                // 如果当前正好在看这个会话，显示回复（未分段的部分作为最后一段）
                 if (_activeSession?.id == sessionIdAtSend) {
-                  _messages.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
+                  if (_segmentsCommitted < response.length) {
+                    _messages.add(_Message(text: response.substring(_segmentsCommitted), isUser: false, timestamp: DateTime.now()));
+                  }
                   // ★ 更新 _activeSession 保留 gatewaySessionId 便于下次续聊
                   _activeSession = updated;
                 }
+                _segmentsCommitted = 0;
               });
             }
           } else if (sessionIdAtSend != null) {
@@ -690,6 +713,7 @@ class _ChatScreenState extends State<ChatScreen> {
               setState(() {
                 _streamingContent = '';
                 _sending = false;
+                _segmentsCommitted = 0;
               });
             }
           }
@@ -706,6 +730,7 @@ class _ChatScreenState extends State<ChatScreen> {
               _messages.add(_Message(text: '⚠️ 发送失败: $e', isUser: false, timestamp: DateTime.now(), isError: true));
               _sending = false;
               _streamingContent = '';
+              _segmentsCommitted = 0;
             });
           }
         },
