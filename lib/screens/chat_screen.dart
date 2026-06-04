@@ -548,6 +548,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final updatedSession = Session(
         id: sessionIdAtSend,
         title: _activeSession?.title ?? '',
+        remark: _activeSession?.remark,
         gatewaySessionId: _activeSession?.gatewaySessionId,
         source: _activeSession?.source ?? 'cli',
         createdAt: _activeSession?.createdAt ?? DateTime.now(),
@@ -677,9 +678,11 @@ class _ChatScreenState extends State<ChatScreen> {
             }
             // 更新列表预览
             final updated = Session(
-              id: sessionIdAtSend, title: _activeSession?.title ?? '',
+              id: sessionIdAtSend,
+              title: _activeSession?.title ?? '',
+              remark: _activeSession?.remark,
               gatewaySessionId: newSessionId?.isNotEmpty == true ? newSessionId : _activeSession?.gatewaySessionId,
-              source: 'cli',
+              source: _activeSession?.source ?? 'cli',
               createdAt: _activeSession?.createdAt ?? DateTime.now(),
               updatedAt: DateTime.now(),
               messageCount: (_messageCache[sessionIdAtSend]?.length ?? 0),
