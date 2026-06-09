@@ -2,7 +2,7 @@
 ; 使用 Inno Setup 编译: iscc installer.iss
 
 #define MyAppName "Hermes Desktop"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.4"
 #define MyAppPublisher "Nous Research"
 
 [Setup]
