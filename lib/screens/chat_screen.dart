@@ -9,7 +9,10 @@ import '../services/gateway_service.dart';
 import '../services/local_db.dart';
 import '../services/config_service.dart';
 import '../models/session.dart';
+import '../models/display_session.dart';
 import '../widgets/chat_message.dart';
+import '../widgets/chat_drop_zone.dart';
+import '../widgets/model_switcher.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -29,9 +32,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final _inputController = TextEditingController();
   final _searchController = TextEditingController();
 
-  List<Session> _sessions = [];
-  List<Session> _displayedSessions = [];
-  Session? _activeSession;
+  List<DisplaySession> _displaySessions = [];
+  List<DisplaySession> _displayedDisplaySessions = [];
+  DisplaySession? _activeDisplaySession;
   List<_Message> _messages = [];
   List<_Message> _allLoadedMessages = []; // 完整消息列表
   bool _loading = true;
@@ -45,6 +48,8 @@ class _ChatScreenState extends State<ChatScreen> {
   static const int _segmentMaxLen = 2000;
   bool _interrupted = false; // 被新消息中断的标志
   final List<Map<String, String>> _attachedFiles = [];
+  String? _currentSessionModel; // 当前会话使用的模型
+  String? _currentSessionProvider; // 当前会话使用的 provider
 
   // 是否正在思考（已发出请求但尚未收到任何 token）
   bool get _isThinking => _sending && _streamingContent.isEmpty;
@@ -139,7 +144,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSessions();
+    _migrateAndLoad();
     _loadSkills();
     _inputController.addListener(_onInputChanged);
     _sessionScrollController.addListener(_onSessionScroll);
@@ -175,7 +180,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamSubscriptions.clear();
     _streamingSessions.clear();
     _newChat();
-    _loadSessions();
+    _migrateAndLoad();
   }
 
   @override
@@ -242,15 +247,20 @@ class _ChatScreenState extends State<ChatScreen> {
     _skillNode.requestFocus();
   }
 
-  Future<void> _loadSessions() async {
+  Future<void> _migrateAndLoad() async {
+    await _localDb.migrateOldSessionsIfNeeded();
+    await _loadDisplaySessions();
+  }
+
+  Future<void> _loadDisplaySessions() async {
     setState(() => _loading = true);
     try {
-      final sessions = await _localDb.getSessions();
+      final sessions = await _localDb.getDisplaySessions();
       setState(() {
-        _sessions = sessions;
+        _displaySessions = sessions;
         _sessionPage = 0;
         _sessionHasMore = sessions.length > _sessionPageSize;
-        _displayedSessions = sessions.take(_sessionPageSize).toList();
+        _displayedDisplaySessions = sessions.take(_sessionPageSize).toList();
         _loading = false;
       });
     } catch (e) {
@@ -264,12 +274,12 @@ class _ChatScreenState extends State<ChatScreen> {
     _sessionPage++;
     final start = _sessionPage * _sessionPageSize;
     final end = start + _sessionPageSize;
-    final more = _sessions.length > start
-        ? _sessions.sublist(start, end > _sessions.length ? _sessions.length : end)
-        : <Session>[];
+    final more = _displaySessions.length > start
+        ? _displaySessions.sublist(start, end > _displaySessions.length ? _displaySessions.length : end)
+        : <DisplaySession>[];
     setState(() {
-      _displayedSessions.addAll(more);
-      _sessionHasMore = _sessions.length > _displayedSessions.length;
+      _displayedDisplaySessions.addAll(more);
+      _sessionHasMore = _displaySessions.length > _displayedDisplaySessions.length;
       _loadingMore = false;
     });
   }
@@ -282,10 +292,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadSessionMessages() async {
-    if (_activeSession == null) return;
+    if (_activeDisplaySession == null) return;
 
-    // 检查缓存
-    final cached = _messageCache[_activeSession!.id];
+    // 读取会话的模型设置
+    _currentSessionModel = _activeDisplaySession!.model;
+    _currentSessionProvider = _activeDisplaySession!.provider;
+
+    // 检查缓存（用 displayId）
+    final cached = _messageCache[_activeDisplaySession!.id];
     if (cached != null) {
       _applyMessagePagination(cached);
       return;
@@ -293,8 +307,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _showLoading('加载会话中...');
     try {
-      // 从本地数据库读取
-      final rawMessages = await _localDb.getMessages(_activeSession!.id);
+      // 从本地数据库读取（用当前后端 session_id）
+      final backendId = _activeDisplaySession!.currentBackendId;
+      if (backendId.isEmpty) {
+        _hideLoading();
+        _applyMessagePagination([]);
+        return;
+      }
+      final rawMessages = await _localDb.getMessages(backendId);
       if (rawMessages.isEmpty) {
         _hideLoading();
         _applyMessagePagination([]);
@@ -308,6 +328,16 @@ class _ChatScreenState extends State<ChatScreen> {
         if (role == 'assistant' && (content == null || (content is String && content.isEmpty))) {
           continue;
         }
+        // Read attachments from JSON
+        final attJson = m['attachments'] as List?;
+        final atts = attJson?.map((a) {
+          final am = a as Map<String, dynamic>;
+          return <String, String>{
+            'name': (am['name'] as String?) ?? '',
+            'mime': (am['mime'] as String?) ?? 'application/octet-stream',
+          };
+        }).toList();
+        final hasAtts = atts != null && atts.isNotEmpty;
         final tsStr = m['timestamp'] as String?;
         final ts = tsStr != null ? DateTime.tryParse(tsStr) ?? DateTime.now() : DateTime.now();
         String text;
@@ -321,7 +351,7 @@ class _ChatScreenState extends State<ChatScreen> {
         } else {
           text = content?.toString() ?? '';
         }
-        if (text.trim().isEmpty) continue;
+        if (text.trim().isEmpty && !hasAtts) continue;
         if (role != 'user' && text.length > _segmentMaxLen) {
           // ★ AI 长回复分段显示，每段不超过 2000 字
           for (int i = 0; i < text.length; i += _segmentMaxLen) {
@@ -333,11 +363,12 @@ class _ChatScreenState extends State<ChatScreen> {
             text: text,
             isUser: role == 'user',
             timestamp: ts,
+            attachments: role == 'user' ? atts : null,
           ));
         }
       }
-      // 写入缓存
-      _messageCache[_activeSession!.id] = messages;
+      // 写入缓存（用 displayId）
+      _messageCache[_activeDisplaySession!.id] = messages;
       _applyMessagePagination(messages);
     } catch (_) {
       _hideLoading();
@@ -391,17 +422,17 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _selectSession(Session session) {
+  void _selectSession(DisplaySession ds) {
     // 如果已选中相同会话，不做任何事
-    if (_activeSession?.id == session.id) return;
+    if (_activeDisplaySession?.id == ds.id) return;
 
     // ★ 保存当前会话的输入框草稿
-    if (_activeSession != null) {
+    if (_activeDisplaySession != null) {
       final currentText = _inputController.text.trim();
       if (currentText.isNotEmpty) {
-        _draftMessages[_activeSession!.id] = currentText;
+        _draftMessages[_activeDisplaySession!.id] = currentText;
       } else {
-        _draftMessages.remove(_activeSession!.id);
+        _draftMessages.remove(_activeDisplaySession!.id);
       }
     }
 
@@ -409,11 +440,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _inputController.removeListener(_onInputChanged);
 
     setState(() {
-      _activeSession = session;
+      _activeDisplaySession = ds;
+      _currentSessionModel = ds.model;
+      _currentSessionProvider = ds.provider;
       _messages = [];
       // ★ 如果此会话正在流式回复中，显示其 buffer
-      if (_streamingBuffers.containsKey(session.id)) {
-        _streamingContent = _streamingBuffers[session.id]!;
+      if (_streamingBuffers.containsKey(ds.id)) {
+        _streamingContent = _streamingBuffers[ds.id]!;
         _sending = true;
       } else {
         _streamingContent = '';
@@ -421,7 +454,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
     // ★ 恢复目标会话的输入框草稿
-    final draft = _draftMessages[session.id];
+    final draft = _draftMessages[ds.id];
     _inputController.text = draft ?? '';
     if (draft != null && draft.isNotEmpty) {
       _inputController.selection = TextSelection.fromPosition(
@@ -429,8 +462,8 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
     _inputController.addListener(_onInputChanged);
-    // 检查缓存，有就直接显示
-    final cached = _messageCache[session.id];
+    // 检查缓存，有就直接显示（用 displayId）
+    final cached = _messageCache[ds.id];
     if (cached != null) {
       _applyMessagePagination(cached);
     } else {
@@ -447,19 +480,117 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _newChat() {
     // ★ 保存当前会话的输入草稿
-    if (_activeSession != null) {
+    if (_activeDisplaySession != null) {
       final currentText = _inputController.text.trim();
       if (currentText.isNotEmpty) {
-        _draftMessages[_activeSession!.id] = currentText;
+        _draftMessages[_activeDisplaySession!.id] = currentText;
       }
     }
     setState(() {
-      _activeSession = null;
+      _activeDisplaySession = null;
       _messages = [];
       _streamingContent = '';
       _interrupted = false;
+      _currentSessionModel = null;
+      _currentSessionProvider = null;
     });
     _inputController.text = '';
+  }
+
+  /// 构建发送给 API 的模型名（带 provider 前缀）。
+  /// Gateway API 期望格式为 provider/model_name（如 deepseek/deepseek-v4-flash）。
+  /// 如果 model 已含 `/`（如 anthropic/claude-sonnet-4）则不重复加前缀。
+  String? _buildModelName() {
+    final m = _currentSessionModel;
+    if (m == null || m.isEmpty) return null;
+    final p = _currentSessionProvider;
+    if (p == null || p.isEmpty) return m; // 无 provider 信息，原样返回
+    if (m.contains('/')) return m; // 已含前缀（如 anthropic/claude-sonnet-4）
+    return '$p/$m';
+  }
+
+  void _onModelSelected(ModelSelectionResult result) async {
+    if (result.asGlobal) {
+      // 对话框已保存配置并重启 Gateway，这里只刷新 UI
+      setState(() {
+        _currentSessionModel = result.model;
+        _currentSessionProvider = result.provider;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('全局默认模型已切换为 ${result.model}，Gateway 重启中...'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } else {
+      // 应用到当前会话
+      final displayId = _activeDisplaySession?.id;
+      if (displayId == null) {
+        // 没有活跃会话（新对话），直接切换无副作用
+        setState(() {
+          _currentSessionModel = result.model;
+          _currentSessionProvider = result.provider;
+        });
+        return;
+      }
+
+      // 有活跃会话：需要确认用户知道上下文会丢失
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('切换会话模型'),
+          content: const Text(
+            '切换模型后，AI 将不记得之前的对话内容（上下文丢失），'
+            '但历史消息仍可查看。\n\n'
+            '下一消息起生效。确定要继续吗？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('确定切换'),
+            ),
+          ],
+        ),
+      );
+
+      if (proceed != true) return;
+
+      // 保存模型
+      await _localDb.updateSessionModel(displayId, result.model, provider: result.provider);
+      // 更新展示会话
+      final ds = await _localDb.getDisplaySession(displayId);
+      if (ds != null) {
+        await _localDb.updateDisplaySession(ds.copyWith(
+          model: result.model,
+          provider: result.provider,
+          updatedAt: DateTime.now(),
+        ));
+      }
+      setState(() {
+        _currentSessionModel = result.model;
+        _currentSessionProvider = result.provider;
+        if (_activeDisplaySession != null) {
+          _activeDisplaySession = _activeDisplaySession!.copyWith(
+            model: result.model,
+            provider: result.provider,
+          );
+        }
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('会话模型已切换为 ${result.model}，下一消息起生效'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _pickFile() async {
@@ -480,6 +611,43 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         } catch (_) {}
       }
+    }
+  }
+
+  Future<void> _pasteImageFromClipboard() async {
+    Directory? tempDir;
+    try {
+      // Windows: 用 PowerShell 将剪贴板图片保存到临时文件后读取
+      tempDir = await Directory.systemTemp.createTemp('hermes_clip_');
+      final tempPng = '${tempDir.path}\\clipboard_paste.png';
+      final psResult = await Process.run('powershell', [
+        '-NoProfile',
+        '-Command',
+        'Add-Type -AssemblyName System.Windows.Forms; '
+        r'$img = [System.Windows.Forms.Clipboard]::GetImage(); '
+        r'if ($img -ne $null) { '
+        r'  $img.Save("'"$tempPng"'", [System.Drawing.Imaging.ImageFormat]::Png); '
+        r'  $img.Dispose(); '
+        r'  Write-Output "OK"; '
+        r'} else { '
+        r'  Write-Output "NO_IMAGE"; '
+        r'}',
+      ]);
+      if (psResult.stdout.toString().trim() != 'OK') return;
+      final file = File(tempPng);
+      if (!await file.exists()) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return;
+      final b64 = base64Encode(bytes);
+      if (mounted) {
+        setState(() {
+          _attachedFiles.add(_makeAttachment('clipboard.png', '', b64));
+        });
+      }
+    } catch (e) {
+      debugPrint('ChatScreen: 粘贴剪贴板图片失败: $e');
+    } finally {
+      await tempDir?.delete(recursive: true);
     }
   }
 
@@ -506,8 +674,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _inputController.clear();
     // 发送后清除该会话的输入草稿
-    if (_activeSession?.id != null) {
-      _sessionDrafts.remove(_activeSession!.id);
+    if (_activeDisplaySession?.id != null) {
+      _sessionDrafts.remove(_activeDisplaySession!.id);
     }
 
     // ★ 如果正在回复中，先中断当前回复
@@ -518,93 +686,133 @@ class _ChatScreenState extends State<ChatScreen> {
     // 清除之前的中断标记（新消息开始）
     _interrupted = false;
 
-    // ★ 记录发消息时的会话 ID
-    String? sessionIdAtSend = _activeSession?.id;
-    final bool isNewSession = sessionIdAtSend == null;
+    // ★ 用 displayId 作为本地会话标识
+    final String? displayId = _activeDisplaySession?.id;
+    final bool isNewSession = displayId == null;
+    // ★ 取当前后端 session_id 发往 Gateway
+    final gatewayIdForApi = _activeDisplaySession?.currentBackendId;
+    // ★ 记下 displayId 供 onDone 使用
+    final String? displayIdAtSend = displayId;
 
     if (isNewSession) {
-      // ★ 无激活会话：立即创建本地会话，无论成功失败都保留用户消息
-      final localId = '${DateTime.now().microsecondsSinceEpoch}';
-      sessionIdAtSend = localId;
+      // ★ 无激活会话：生成本地 displayId + 暂存用户消息
+      final localDisplayId = '${DateTime.now().microsecondsSinceEpoch}';
       final title = '${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().day.toString().padLeft(2, '0')} ${text.length > 25 ? '${text.substring(0, 25)}...' : text}';
-      await _localDb.createSession(id: localId, title: title, userMessage: text);
-      final newSession = Session(
-        id: localId, title: title, source: 'cli',
-        createdAt: DateTime.now(), updatedAt: DateTime.now(),
-        messageCount: 1,
-        preview: text.length > 100 ? '${text.substring(0, 100)}...' : text,
+      // 用一个暂存 backendId 存放用户消息（onDone 后替换为真实后端 session_id）
+      final tempBackendId = 'pending_$localDisplayId';
+      await _localDb.createSession(
+        id: tempBackendId, title: title, userMessage: text,
+        model: _currentSessionModel, provider: _currentSessionProvider,
+        userAttachments: _attachedFiles.isNotEmpty
+            ? _attachedFiles.map((m) => Map<String, String>.from(m)).toList()
+            : null,
       );
-      _sessions.insert(0, newSession);
-      _displayedSessions.insert(0, newSession);
-      _messageCache[localId] = [
-        _Message(text: text, isUser: true, timestamp: DateTime.now()),
+      // 创建 DisplaySession
+      final newDs = DisplaySession(
+        id: localDisplayId,
+        title: title,
+        currentBackendId: tempBackendId,
+        model: _currentSessionModel,
+        provider: _currentSessionProvider,
+      );
+      await _localDb.createDisplaySession(newDs);
+      _displaySessions.insert(0, newDs);
+      _displayedDisplaySessions.insert(0, newDs);
+      _messageCache[localDisplayId] = [
+        _Message(text: text, isUser: true, timestamp: DateTime.now(),
+            attachments: _attachedFiles.isNotEmpty
+                ? _attachedFiles.map((m) => Map<String, String>.from(m)).toList()
+                : null),
       ];
-      setState(() => _activeSession = newSession);
-    } else {
-      // 已有会话：用户消息立即持久化
-      await _localDb.addMessage(sessionIdAtSend, 'user', text);
-      // 立即更新内存中的会话预览（显示用户刚发的消息）
-      final userPreview = text.length > 100 ? '${text.substring(0, 100)}...' : text;
-      final updatedSession = Session(
-        id: sessionIdAtSend,
-        title: _activeSession?.title ?? '',
-        remark: _activeSession?.remark,
-        gatewaySessionId: _activeSession?.gatewaySessionId,
-        source: _activeSession?.source ?? 'cli',
-        createdAt: _activeSession?.createdAt ?? DateTime.now(),
-        updatedAt: DateTime.now(),
-        messageCount: (_messageCache[sessionIdAtSend]?.length ?? 0) + 1,
-        preview: userPreview,
+      setState(() => _activeDisplaySession = newDs);
+    } else if (displayId != null && _activeDisplaySession != null) {
+      // 已有会话：用户消息存入当前后端
+      final currentBackendId = _activeDisplaySession!.currentBackendId;
+      if (currentBackendId.isNotEmpty) {
+        await _localDb.addMessage(currentBackendId, 'user', text,
+          attachments: _attachedFiles.isNotEmpty
+              ? _attachedFiles.map((m) => Map<String, String>.from(m)).toList()
+              : null,
+        );
+      }
+      // 更新展示会话的 updatedAt
+      await _localDb.updateDisplaySession(
+        _activeDisplaySession!.copyWith(updatedAt: DateTime.now()),
       );
-      final idx = _sessions.indexWhere((s) => s.id == sessionIdAtSend);
-      final displayIdx = _displayedSessions.indexWhere((s) => s.id == sessionIdAtSend);
-      if (idx >= 0) _sessions.removeAt(idx);
-      if (displayIdx >= 0) _displayedSessions.removeAt(displayIdx);
-      _sessions.insert(0, updatedSession);
-      _displayedSessions.insert(0, updatedSession);
     }
 
-    // 本地显示用户消息
-    final userMsg = _Message(text: text, isUser: true, timestamp: DateTime.now());
-    if (sessionIdAtSend != null) {
-      final cached = _messageCache[sessionIdAtSend];
+    // 本地显示用户消息（纯附件无文字时显示附件名）
+    final displayText = text.isNotEmpty
+        ? text
+        : _attachedFiles.map((a) => '[${a['name'] ?? '附件'}]').join(' ');
+    final userMsg = _Message(
+      text: displayText, isUser: true, timestamp: DateTime.now(),
+      attachments: _attachedFiles.isNotEmpty
+          ? _attachedFiles.map((m) => Map<String, String>.from(m)).toList()
+          : null,
+    );
+    if (displayIdAtSend != null) {
+      final cached = _messageCache[displayIdAtSend];
       if (cached != null && !isNewSession) cached.add(userMsg);
     }
     setState(() {
-      if (sessionIdAtSend != null) _messages.add(userMsg);
+      if (displayIdAtSend != null) _messages.add(userMsg);
       _sending = true;
     });
     _segmentsCommitted = 0;
     _scrollToBottom();
 
     try {
-      // ★ 用已存储的 Gateway session ID 发送，实现续聊
-      final gatewayIdForApi = _activeSession?.gatewaySessionId;
-      final stream = _gateway.chatStream(text, sessionId: gatewayIdForApi,
-          attachments: _attachedFiles.isNotEmpty ? _attachedFiles : null);
+      // 传副本，防止 finally 中 clear() 影响异步 _doChat 读取
+      // Gateway API 只支持图片附件，非图片文件通过文本告知 AI 路径
+      final filesForApi = _attachedFiles.isNotEmpty
+          ? _attachedFiles
+              .where((a) => (a['mime'] ?? '').startsWith('image/'))
+              .map((m) => Map<String, String>.from(m))
+              .toList()
+          : null;
+      // 非图片文件：在文本中附加路径，让 AI 用 read_file 工具读取
+      final nonImagePaths = _attachedFiles
+          .where((a) => !(a['mime'] ?? '').startsWith('image/'))
+          .map((a) => a['path'] ?? '')
+          .where((p) => p.isNotEmpty)
+          .toList();
+      String apiText = text;
+      if (nonImagePaths.isNotEmpty) {
+        final instruction = '\n\n[附件文件路径]:\n${nonImagePaths.map((p) => '- $p').join('\n')}\n请使用 read_file 工具读取这些文件并分析。';
+        apiText = text.isNotEmpty ? '$text$instruction' : '请读取以下文件:\n${nonImagePaths.map((p) => '- $p').join('\n')}';
+      }
+      // 同样保存附件信息供 onDone 回调使用（那时 _attachedFiles 已被 finally 清除）
+      final pendingAttachments = _attachedFiles.isNotEmpty
+          ? _attachedFiles.map((m) => Map<String, String>.from(m)).toList()
+          : null;
+      final stream = _gateway.chatStream(apiText, sessionId: gatewayIdForApi,
+          attachments: filesForApi,
+          model: _buildModelName());
 
       // ★ 如果此会话已有活跃流，先取消旧的（防止重复）
-      if (sessionIdAtSend != null && _streamSubscriptions.containsKey(sessionIdAtSend)) {
-        await _streamSubscriptions[sessionIdAtSend]!.cancel();
-        _streamSubscriptions.remove(sessionIdAtSend);
-        _streamingBuffers.remove(sessionIdAtSend);
-        _streamingSessions.remove(sessionIdAtSend);
+      final oldSid = displayIdAtSend ?? '__pending_new__';
+      if (_streamSubscriptions.containsKey(oldSid)) {
+        await _streamSubscriptions[oldSid]!.cancel();
+        _streamSubscriptions.remove(oldSid);
+        _streamingBuffers.remove(oldSid);
+        _streamingSessions.remove(oldSid);
       }
 
       // ★ 用 listen 替代 await for，实现并行流
       final sub = stream.listen(
         (chunk) {
           // 累积到 buffer
-          final sid = sessionIdAtSend ?? '__pending__';
+          final sid = displayIdAtSend ?? '__pending__';
           _streamingBuffers[sid] = (_streamingBuffers[sid] ?? '') + chunk;
           // 仅当此会话是当前激活会话时更新 UI（节流到 ~300ms 防卡死）
-          if (_activeSession?.id == sid && mounted) {
+          if (_activeDisplaySession?.id == sid && mounted) {
             if (_streamThrottleTimer == null || !_streamThrottleTimer!.isActive) {
               _streamThrottleTimer?.cancel();
               _streamThrottleTimer = Timer(const Duration(milliseconds: 300), () {
                 if (!mounted) return;
                 // 确保节流触发时还是同一个会话
-                if (_activeSession?.id != sid) return;
+                if (_activeDisplaySession?.id != sid) return;
                 final full = _streamingBuffers[sid] ?? '';
                 setState(() {
                   // ★ 超过 2000 字自动分段，每段作为独立消息
@@ -625,93 +833,155 @@ class _ChatScreenState extends State<ChatScreen> {
           if (!mounted) return;
           _streamThrottleTimer?.cancel();
           final newSessionId = _gateway.lastSessionId;
-          // 读 buffer（新会话从 __pending__ 取，已有会话从 sessionId 取）
-          final bufferKey = sessionIdAtSend ?? '__pending__';
+          // 读 buffer（用 displayId）
+          final bufferKey = displayIdAtSend ?? '__pending__';
           final response = _streamingBuffers[bufferKey] ?? '';
 
-          if (sessionIdAtSend == null && newSessionId != null && newSessionId.isNotEmpty) {
+          if (displayIdAtSend == null && newSessionId != null && newSessionId.isNotEmpty) {
             // ── 全新会话 ──
-            // 清理 pending buffer，迁移到真实 sessionId
+            // isNewSession 分支已创建 DisplaySession + tempBackendId
+            // 这里把 tempBackendId 替换为真实后端 session_id
             _streamSubscriptions.remove('__pending__');
             _streamingBuffers.remove('__pending__');
             _streamingSessions.remove('__pending__');
-            final title = '${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().day.toString().padLeft(2, '0')} ${text.length > 25 ? '${text.substring(0, 25)}...' : text}';
-            await _localDb.createSession(
-              id: newSessionId, title: title,
-              userMessage: text, assistantMessage: response,
-            );
-            final preview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
-            final newSession = Session(
-              id: newSessionId, title: title, source: 'cli',
-              createdAt: DateTime.now(), updatedAt: DateTime.now(),
-              messageCount: 2, preview: preview,
-            );
-            // 缓存
-            _messageCache[newSessionId] = [
-              _Message(text: text, isUser: true, timestamp: DateTime.now()),
-              _Message(text: response, isUser: false, timestamp: DateTime.now()),
-            ];
-            if (mounted) {
-              setState(() {
-                _activeSession = newSession;
-                _sessions.insert(0, newSession);
-                _displayedSessions.insert(0, newSession);
-                _messages = List.from(_messageCache[newSessionId]!);
-                _streamingContent = '';
-                _sending = false;
-              });
+
+            // 读取旧 displayId（刚创建的那个）
+            final newDsList = await _localDb.getDisplaySessions();
+            final latestDs = newDsList.isNotEmpty ? newDsList.first : null;
+            final tempBackendId = latestDs?.currentBackendId ?? '';
+
+            if (latestDs != null && newSessionId.isNotEmpty) {
+              // 从 tempBackendId 迁移消息到真实后端 session_id
+              final rawMessages = await _localDb.getMessages(tempBackendId);
+              await _localDb.createSession(
+                id: newSessionId, title: latestDs.title,
+                model: _currentSessionModel,
+                provider: _currentSessionProvider,
+              );
+              // 逐条迁移消息
+              for (final msg in rawMessages) {
+                await _localDb.addMessage(
+                  newSessionId, msg['role'] as String? ?? 'user',
+                  msg['content'] as String? ?? '',
+                );
+              }
+              // 加上 AI 回复
+              if (response.isNotEmpty) {
+                await _localDb.addMessage(newSessionId, 'assistant', response);
+              }
+              // 删除临时 backend
+              await _localDb.deleteSession(tempBackendId);
+              // 更新 DisplaySession
+              await _localDb.switchBackendId(latestDs.id, newSessionId);
+              final updatedDs = latestDs.copyWith(
+                currentBackendId: newSessionId,
+                backendIdHistory: latestDs.backendIdHistory,
+                updatedAt: DateTime.now(),
+              );
+              final preview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
+              _messageCache[latestDs.id] = [
+                _Message(text: text, isUser: true, timestamp: DateTime.now(),
+                    attachments: pendingAttachments),
+                _Message(text: response, isUser: false, timestamp: DateTime.now()),
+              ];
+              if (mounted) {
+                setState(() {
+                  _activeDisplaySession = updatedDs;
+                  final idx = _displaySessions.indexWhere((s) => s.id == latestDs.id);
+                  if (idx >= 0) _displaySessions[idx] = updatedDs;
+                  final didx = _displayedDisplaySessions.indexWhere((s) => s.id == latestDs.id);
+                  if (didx >= 0) _displayedDisplaySessions[didx] = updatedDs;
+                  _messages = List.from(_messageCache[latestDs.id]!);
+                  _streamingContent = '';
+                  _sending = false;
+                });
+              }
             }
-          } else if (sessionIdAtSend != null && response.isNotEmpty) {
+          } else if (displayIdAtSend != null && response.isNotEmpty) {
             // ── 已有会话：存 AI 回复 ──
-            // 清理流状态
-            _streamSubscriptions.remove(sessionIdAtSend);
-            _streamingBuffers.remove(sessionIdAtSend);
-            _streamingSessions.remove(sessionIdAtSend);
-            await _localDb.addMessage(sessionIdAtSend, 'assistant', response);
-            // ★ 保存 Gateway session ID 实现续聊
-            if (newSessionId != null && newSessionId.isNotEmpty) {
-              await _localDb.updateGatewaySessionId(sessionIdAtSend, newSessionId);
-            }
-            final cached = _messageCache[sessionIdAtSend];
-            if (cached != null) {
-              cached.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
-            }
-            // 更新列表预览
-            final updated = Session(
-              id: sessionIdAtSend,
-              title: _activeSession?.title ?? '',
-              remark: _activeSession?.remark,
-              gatewaySessionId: newSessionId?.isNotEmpty == true ? newSessionId : _activeSession?.gatewaySessionId,
-              source: _activeSession?.source ?? 'cli',
-              createdAt: _activeSession?.createdAt ?? DateTime.now(),
-              updatedAt: DateTime.now(),
-              messageCount: (_messageCache[sessionIdAtSend]?.length ?? 0),
-              preview: response.length > 100 ? '${response.substring(0, 100)}...' : response,
-            );
-            if (mounted) {
-              setState(() {
-                final idx = _sessions.indexWhere((s) => s.id == sessionIdAtSend);
-                final displayIdx = _displayedSessions.indexWhere((s) => s.id == sessionIdAtSend);
-                if (idx >= 0) _sessions[idx] = updated;
-                if (displayIdx >= 0) _displayedSessions[displayIdx] = updated;
-                _streamingContent = '';
-                _sending = false;
-                // 如果当前正好在看这个会话，显示回复（未分段的部分作为最后一段）
-                if (_activeSession?.id == sessionIdAtSend) {
-                  if (_segmentsCommitted < response.length) {
-                    _messages.add(_Message(text: response.substring(_segmentsCommitted), isUser: false, timestamp: DateTime.now()));
+            _streamSubscriptions.remove(displayIdAtSend);
+            _streamingBuffers.remove(displayIdAtSend);
+            _streamingSessions.remove(displayIdAtSend);
+
+            // 获取当前 DisplaySession
+            final ds = await _localDb.getDisplaySession(displayIdAtSend);
+            if (ds != null) {
+              final currentBackendId = ds.currentBackendId;
+              if (currentBackendId.isNotEmpty) {
+                await _localDb.addMessage(currentBackendId, 'assistant', response);
+              }
+              // Gateway 返回了新 session_id → 切换 backend
+              if (newSessionId != null && newSessionId.isNotEmpty && newSessionId != currentBackendId) {
+                // 创建新后端会话
+                await _localDb.createSession(
+                  id: newSessionId, title: ds.title,
+                  model: ds.model, provider: ds.provider,
+                );
+                // 迁移旧消息到新后端
+                if (currentBackendId.isNotEmpty) {
+                  final oldMessages = await _localDb.getMessages(currentBackendId);
+                  for (final msg in oldMessages) {
+                    await _localDb.addMessage(
+                      newSessionId, msg['role'] as String? ?? 'user',
+                      msg['content'] as String? ?? '',
+                    );
+                    if (msg['attachments'] != null) {
+                      // 简化处理：跳过附件迁移
+                    }
                   }
-                  // ★ 更新 _activeSession 保留 gatewaySessionId 便于下次续聊
-                  _activeSession = updated;
                 }
-                _segmentsCommitted = 0;
-              });
+                // 切换 DisplaySession
+                await _localDb.switchBackendId(displayIdAtSend, newSessionId);
+                final updatedDs = ds.copyWith(
+                  currentBackendId: newSessionId,
+                  updatedAt: DateTime.now(),
+                );
+                final cached = _messageCache[displayIdAtSend];
+                if (cached != null) {
+                  cached.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
+                }
+                if (mounted) {
+                  setState(() {
+                    final idx = _displaySessions.indexWhere((s) => s.id == displayIdAtSend);
+                    if (idx >= 0) _displaySessions[idx] = updatedDs;
+                    final didx = _displayedDisplaySessions.indexWhere((s) => s.id == displayIdAtSend);
+                    if (didx >= 0) _displayedDisplaySessions[didx] = updatedDs;
+                    if (_activeDisplaySession?.id == displayIdAtSend) {
+                      _activeDisplaySession = updatedDs;
+                      if (_segmentsCommitted < response.length) {
+                        _messages.add(_Message(text: response.substring(_segmentsCommitted), isUser: false, timestamp: DateTime.now()));
+                      }
+                    }
+                    _streamingContent = '';
+                    _sending = false;
+                    _segmentsCommitted = 0;
+                  });
+                }
+              } else {
+                // 同一个后端：只添加消息
+                final cached = _messageCache[displayIdAtSend];
+                if (cached != null) {
+                  cached.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
+                }
+                if (mounted) {
+                  setState(() {
+                    if (_activeDisplaySession?.id == displayIdAtSend) {
+                      if (_segmentsCommitted < response.length) {
+                        _messages.add(_Message(text: response.substring(_segmentsCommitted), isUser: false, timestamp: DateTime.now()));
+                      }
+                    }
+                    _streamingContent = '';
+                    _sending = false;
+                    _segmentsCommitted = 0;
+                  });
+                }
+              }
             }
-          } else if (sessionIdAtSend != null) {
-            // ── 已有会话但无响应内容（空回复、API 错误导致流中断等） ──
-            _streamSubscriptions.remove(sessionIdAtSend);
-            _streamingBuffers.remove(sessionIdAtSend);
-            _streamingSessions.remove(sessionIdAtSend);
+          } else if (displayIdAtSend != null) {
+            // ── 已有会话但无响应内容 ──
+            _streamSubscriptions.remove(displayIdAtSend);
+            _streamingBuffers.remove(displayIdAtSend);
+            _streamingSessions.remove(displayIdAtSend);
             if (mounted) {
               setState(() {
                 _streamingContent = '';
@@ -724,7 +994,7 @@ class _ChatScreenState extends State<ChatScreen> {
         onError: (e) {
           _streamThrottleTimer?.cancel();
           // 清理
-          final sid = sessionIdAtSend ?? '__pending__';
+          final sid = displayIdAtSend ?? '__pending__';
           _streamSubscriptions.remove(sid);
           _streamingBuffers.remove(sid);
           _streamingSessions.remove(sid);
@@ -741,13 +1011,13 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       // ★ 记录订阅
-      final sid = sessionIdAtSend ?? '__pending_new__';
+      final sid = displayIdAtSend ?? '__pending_new__';
       _streamSubscriptions[sid] = sub;
       _streamingBuffers[sid] = '';
       _streamingSessions.add(sid);
 
       // 如果没有 sessionId（新会话），用 pending key 占位
-      if (sessionIdAtSend == null) {
+      if (displayIdAtSend == null) {
         // 稍后 onDone 中会拿到 Gateway 返回的 sessionId
       }
 
@@ -791,9 +1061,14 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.surfaceContainerLow,
-        title: Text(_activeSession?.displayTitle ?? '新对话'),
+        title: Text(_activeDisplaySession?.displayTitle ?? '新对话'),
         actions: [
-          if (_activeSession != null)
+          ModelSwitcher(
+            currentModel: _currentSessionModel,
+            currentProvider: _currentSessionProvider,
+            onModelSelected: _onModelSelected,
+          ),
+          if (_activeDisplaySession != null)
             IconButton(
               icon: const Icon(Icons.close),
               onPressed: _newChat,
@@ -845,7 +1120,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: _loading
                       ? Center(child: CircularProgressIndicator())
-                      : _sessions.isEmpty
+                      : _displaySessions.isEmpty
                           ? Center(
                               child: Text('暂无会话',
                                   style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)))
@@ -929,6 +1204,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 isUser: m.isUser,
                                 timestamp: m.timestamp,
                                 toolCalls: m.toolCalls,
+                                attachments: m.attachments,
                               );
                             }
                             // Streaming content at bottom
@@ -967,7 +1243,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                 ),
                 // Input area
-                Container(
+                ChatDropZone(
+                  onFileDropped: (files) =>
+                      setState(() => _attachedFiles.addAll(files)),
+                  child: Container(
                   padding: EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.surfaceContainerLow,
@@ -1011,23 +1290,33 @@ class _ChatScreenState extends State<ChatScreen> {
                             tooltip: '添加文件',
                           ),
                           Expanded(
-                            child: TextField(
-                              key: ValueKey('input_${_activeSession?.id ?? 'new'}'),
-                              controller: _inputController,
-                              focusNode: _skillNode,
-                              enabled: !_sending && !_loadingMessages,
-                              maxLines: 4,
-                              minLines: 1,
-                              textInputAction: TextInputAction.send,
-                              decoration: InputDecoration(
-                                hintText: '输入消息... / 加载技能\nEnter 发送 · Shift+Enter 换行',
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                            child: KeyboardListener(
+                              focusNode: FocusNode(),
+                              onKeyEvent: (event) {
+                                if (event is KeyDownEvent &&
+                                    event.logicalKey == LogicalKeyboardKey.keyV &&
+                                    HardwareKeyboard.instance.isControlPressed) {
+                                  _pasteImageFromClipboard();
+                                }
+                              },
+                              child: TextField(
+                                key: ValueKey('input_${_activeDisplaySession?.id ?? 'new'}'),
+                                controller: _inputController,
+                                focusNode: _skillNode,
+                                enabled: !_sending && !_loadingMessages,
+                                maxLines: 4,
+                                minLines: 1,
+                                textInputAction: TextInputAction.send,
+                                decoration: InputDecoration(
+                                  hintText: '输入消息... / 加载技能\nEnter 发送 · Shift+Enter 换行',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 12),
                                 ),
-                                contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 12),
+                                onSubmitted: (_) => _sendMessage(),
                               ),
-                              onSubmitted: (_) => _sendMessage(),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -1066,12 +1355,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     ],
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
+        ),
+      ],
+    ),
+  );
   }
 
   /// 扁平会话列表 — 只显示 Desktop 本机会话（source == cli），无分组
@@ -1079,13 +1369,13 @@ class _ChatScreenState extends State<ChatScreen> {
     final cs = Theme.of(context).colorScheme;
     final q = _searchController.text.trim().toLowerCase();
 
-    List<Session> sessions;
+    List<DisplaySession> sessions;
     if (q.isEmpty) {
-      sessions = _displayedSessions.where((s) => s.source == 'cli').toList();
+      sessions = List.from(_displayedDisplaySessions);
     } else {
       // 搜索时忽略分页，全量搜索
-      sessions = _sessions
-          .where((s) => s.source == 'cli' && s.title.toLowerCase().contains(q))
+      sessions = _displaySessions
+          .where((s) => s.displayTitle.toLowerCase().contains(q))
           .toList();
     }
 
@@ -1107,19 +1397,19 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ]
         : sessions.map((s) => _SessionItem(
-              session: s,
-              selected: _activeSession?.id == s.id,
+              ds: s,
+              selected: _activeDisplaySession?.id == s.id,
               pinned: _pinnedSessionIds.contains(s.id),
               onTap: () => _selectSession(s),
-              onDelete: () => _deleteSession(s.id),
+              onDelete: () => _deleteDisplaySession(s.id),
               onTogglePin: () => _togglePin(s.id),
-              onSetRemark: () => _setSessionRemark(s.id),
+              onSetRemark: () => _setDisplaySessionRemark(s.id),
             )).toList();
   }
 
-  Future<void> _setSessionRemark(String id) async {
-    final session = _sessions.firstWhere((s) => s.id == id);
-    final controller = TextEditingController(text: session.remark ?? '');
+  Future<void> _setDisplaySessionRemark(String id) async {
+    final ds = _displaySessions.firstWhere((s) => s.id == id);
+    final controller = TextEditingController(text: ds.remark ?? '');
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1140,28 +1430,37 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
-    // null = cancelled, '' = clear, non-empty = set
     if (result == null) return;
     final remark = result.isNotEmpty ? result : null;
-    await _localDb.updateSessionRemark(id, remark);
-    _loadSessions();
-    // Also update active session if it's the same one
-    if (_activeSession?.id == id && mounted) {
-      setState(() {
-        _activeSession = _activeSession!.copyWith(remark: remark);
-      });
-    }
+    final updated = ds.copyWith(remark: remark);
+    await _localDb.updateDisplaySession(updated);
+    setState(() {
+      final idx = _displaySessions.indexWhere((s) => s.id == id);
+      if (idx >= 0) _displaySessions[idx] = updated;
+      final didx = _displayedDisplaySessions.indexWhere((s) => s.id == id);
+      if (didx >= 0) _displayedDisplaySessions[didx] = updated;
+      if (_activeDisplaySession?.id == id) {
+        _activeDisplaySession = updated;
+      }
+    });
   }
 
-  Future<void> _deleteSession(String id) async {
+  Future<void> _deleteDisplaySession(String id) async {
     _showLoading('删除中...');
     try {
-      await _localDb.deleteSession(id);
+      final ds = _displaySessions.firstWhere((s) => s.id == id);
+      if (ds.currentBackendId.isNotEmpty) {
+        await _localDb.deleteSession(ds.currentBackendId);
+      }
+      for (final oldId in ds.backendIdHistory) {
+        await _localDb.deleteSession(oldId);
+      }
+      await _localDb.deleteDisplaySession(id);
       _hideLoading();
       setState(() {
-        _sessions.removeWhere((s) => s.id == id);
-        _displayedSessions.removeWhere((s) => s.id == id);
-        if (_activeSession?.id == id) _newChat();
+        _displaySessions.removeWhere((s) => s.id == id);
+        _displayedDisplaySessions.removeWhere((s) => s.id == id);
+        if (_activeDisplaySession?.id == id) _newChat();
       });
     } catch (e) {
       _hideLoading();
@@ -1170,7 +1469,7 @@ class _ChatScreenState extends State<ChatScreen> {
           SnackBar(content: Text('删除失败: $e')),
         );
       }
-      _loadSessions();
+      _loadDisplaySessions();
     }
   }
 
@@ -1351,6 +1650,7 @@ class _Message {
   final DateTime timestamp;
   final bool isError;
   final List<Map<String, dynamic>>? toolCalls;
+  final List<Map<String, String>>? attachments;
 
   _Message({
     required this.text,
@@ -1358,6 +1658,7 @@ class _Message {
     required this.timestamp,
     this.isError = false,
     this.toolCalls,
+    this.attachments,
   });
 }
 
@@ -1418,7 +1719,7 @@ class _AnimatedDotsState extends State<_AnimatedDots>
 }
 
 class _SessionItem extends StatelessWidget {
-  final Session session;
+  final DisplaySession ds;
   final bool selected;
   final bool pinned;
   final VoidCallback onTap;
@@ -1427,7 +1728,7 @@ class _SessionItem extends StatelessWidget {
   final VoidCallback onSetRemark;
 
   const _SessionItem({
-    required this.session,
+    required this.ds,
     required this.selected,
     this.pinned = false,
     required this.onTap,
@@ -1488,7 +1789,7 @@ class _SessionItem extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          session.displayTitle,
+                          ds.displayTitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -1502,8 +1803,8 @@ class _SessionItem extends StatelessWidget {
                         ),
                         SizedBox(height: 2),
                         Text(
-                          session.preview?.isNotEmpty == true
-                              ? session.preview!
+                          ds.preview?.isNotEmpty == true
+                              ? ds.preview!
                               : '暂无消息',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -1564,7 +1865,7 @@ class _SessionItem extends StatelessWidget {
               children: [
                 Icon(Icons.edit_outlined, size: 18, color: AppTheme.primary),
                 const SizedBox(width: 12),
-                Text(session.remark != null ? '编辑备注' : '设置备注'),
+                Text(ds.remark != null ? '编辑备注' : '设置备注'),
               ],
             ),
           ),

@@ -7,6 +7,7 @@ class ChatMessageWidget extends StatelessWidget {
   final bool isUser;
   final DateTime timestamp;
   final List<Map<String, dynamic>>? toolCalls;
+  final List<Map<String, String>>? attachments;
 
   const ChatMessageWidget({
     super.key,
@@ -14,6 +15,7 @@ class ChatMessageWidget extends StatelessWidget {
     required this.isUser,
     required this.timestamp,
     this.toolCalls,
+    this.attachments,
   });
 
   @override
@@ -77,6 +79,41 @@ class ChatMessageWidget extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Attachment chips
+                    if (attachments != null && attachments!.isNotEmpty) ...[
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: attachments!.map((att) {
+                          final name = att['name'] ?? '';
+                          final mime = att['mime'] ?? '';
+                          final isImage = mime.startsWith('image/');
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerLow,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: scheme.outlineVariant),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  isImage ? Icons.image : Icons.attach_file,
+                                  size: 14,
+                                  color: scheme.primary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(name,
+                                  style: TextStyle(fontSize: 11, color: scheme.primary),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     MarkdownBody(
                       data: content,
                       selectable: true,

@@ -6,102 +6,10 @@ import '../services/gateway_service.dart';
 import '../services/hermes_file_service.dart';
 import 'chat_screen.dart';
 
-/// Provider → 可选模型列表
-const Map<String, List<String>> providerModels = {
-  'deepseek': [
-    'deepseek-v4-flash', 'deepseek-v3', 'deepseek-r1',
-    'deepseek-r1-distill-qwen-32b',
-  ],
-  'openrouter': [
-    'anthropic/claude-sonnet-4', 'anthropic/claude-opus-4', 'anthropic/claude-haiku-4',
-    'openai/gpt-4o', 'openai/gpt-4o-mini', 'openai/gpt-4.1', 'openai/o3', 'openai/o4-mini',
-    'google/gemini-2.5-pro', 'google/gemini-2.5-flash',
-    'deepseek/deepseek-v4-flash', 'deepseek/deepseek-v3', 'deepseek/deepseek-r1',
-    'meta-llama/llama-4', 'meta-llama/llama-3.3-70b',
-    'cohere/command-r7', 'cohere/command-r-plus',
-    'mistralai/mistral-large', 'mistralai/mistral-saba',
-    'qwen/qwen-max', 'qwen/qwen-plus',
-  ],
-  'anthropic': [
-    'claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4',
-    'claude-sonnet-4-20250514', 'claude-opus-4-20250514',
-  ],
-  'openai': [
-    'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-nano',
-    'o3', 'o3-mini', 'o4-mini',
-    'gpt-4.1-2025-04-14', 'gpt-4o-2024-08-06',
-  ],
-  'gemini': [
-    'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
-    'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash',
-  ],
-  'kimi': [
-    'kimi-k2.5', 'kimi-k2', 'kimi-v1.5',
-  ],
-  'ollama': [
-    'llama-3.3-70b', 'llama-3.1-8b', 'qwen-2.5-72b', 'qwen-2.5-32b',
-    'mistral-large', 'mixtral-8x22b', 'deepseek-r1-70b',
-    'gemma-3-27b', 'phi-4', 'nomic-embed-text',
-  ],
-  'glm': [
-    'glm-4-plus', 'glm-4-air', 'glm-4-long', 'glm-4-flash',
-    'glm-5', 'glm-5-flash',
-  ],
-  'minimax': [
-    'minimax-m2.5', 'minimax-m1', 'minimax-text-01',
-  ],
-  'arcee': [
-    'trinity-mini', 'trinity-large', 'trinity-medium',
-    'arcee-neo', 'arcee-7b',
-  ],
-  'opencode-zen': [
-    'gpt-4o', 'claude-sonnet-4', 'gemini-2.5-pro',
-    'deepseek-v4-flash', 'qwen-max',
-  ],
-  'opencode-go': [
-    'glm-5', 'kimi-k2.5', 'minimax-m2.5',
-    'qwen-plus', 'deepseek-v3',
-  ],
-  'huggingface': [
-    'meta-llama/Llama-4', 'meta-llama/Llama-3.3-70B-Instruct',
-    'mistralai/Mistral-Large', 'mistralai/Mistral-Saba',
-    'Qwen/Qwen2.5-72B-Instruct', 'deepseek-ai/DeepSeek-R1',
-    'google/gemma-3-27b-it',
-  ],
-  'qwen': [
-    'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-long',
-    'qwen-max-2026-01-25',
-  ],
-  'xiaomi': [
-    'mimo-v2-pro', 'mimo-v2-flash', 'mimo-v2-omni',
-    'mimo-v2-vision',
-  ],
-};
-
-/// Provider → 默认 Base URL
-const Map<String, String> providerBaseUrls = {
-  'deepseek': 'https://api.deepseek.com/v1',
-  'openrouter': 'https://openrouter.ai/api/v1',
-  'anthropic': 'https://api.anthropic.com/v1',
-  'openai': 'https://api.openai.com/v1',
-  'gemini': 'https://generativelanguage.googleapis.com/v1beta/openai',
-  'kimi': 'https://api.moonshot.cn/v1',
-  'ollama': 'https://ollama.com/v1',
-  'glm': 'https://api.z.ai/api/paas/v4',
-  'minimax': 'https://api.minimax.io/v1',
-  'arcee': 'https://api.arcee.ai/v1',
-  'opencode-zen': 'https://opencode.ai/zen/v1',
-  'opencode-go': 'https://opencode.ai/zen/go/v1',
-  'huggingface': 'https://api-inference.huggingface.co/v1',
-  'qwen': 'https://portal.qwen.ai/v1',
-  'xiaomi': 'https://api.xiaomimimo.com/v1',
-};
-
-const allProviders = [
-  'deepseek', 'openrouter', 'anthropic', 'openai', 'gemini', 'kimi',
-  'ollama', 'glm', 'minimax', 'arcee',
-  'opencode-zen', 'opencode-go', 'huggingface', 'qwen', 'xiaomi',
-];
+/// Provider → 可选模型列表（引用 GatewayService 中心数据源）
+const Map<String, List<String>> providerModels = GatewayService.providerModels;
+const Map<String, String> providerBaseUrls = GatewayService.providerBaseUrls;
+const allProviders = GatewayService.allProviders;
 
 class ModelsScreen extends StatefulWidget {
   final void Function(int index) onNavigate;

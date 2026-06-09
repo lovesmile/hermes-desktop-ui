@@ -8,6 +8,8 @@ class Session {
   final DateTime updatedAt;
   final int messageCount;
   final String? preview;
+  final String? model; // 该会话使用的模型名
+  final String? provider; // 该会话使用的 provider
 
   String get displayTitle => remark ?? title;
 
@@ -21,14 +23,18 @@ class Session {
     required this.updatedAt,
     this.messageCount = 0,
     this.preview,
+    this.model,
+    this.provider,
   });
 
-  Session copyWith({String? remark, String? gatewaySessionId}) {
+  Session copyWith({String? remark, String? gatewaySessionId, bool clearGatewaySession = false, String? model, String? provider}) {
     return Session(
       id: id,
       title: title,
       remark: remark ?? this.remark,
-      gatewaySessionId: gatewaySessionId ?? this.gatewaySessionId,
+      gatewaySessionId: clearGatewaySession ? null : (gatewaySessionId ?? this.gatewaySessionId),
+      model: model ?? this.model,
+      provider: provider ?? this.provider,
       source: source,
       createdAt: createdAt,
       updatedAt: updatedAt,
@@ -48,6 +54,8 @@ class Session {
       updatedAt: _parseDate(json['updated_at'] ?? json['updatedAt']),
       messageCount: json['message_count'] ?? json['messageCount'] ?? 0,
       preview: json['preview'],
+      model: json['model'] as String?,
+      provider: json['provider'] as String?,
     );
   }
 
@@ -56,6 +64,8 @@ class Session {
         'title': title,
         if (remark != null) 'remark': remark,
         if (gatewaySessionId != null) 'gateway_session_id': gatewaySessionId,
+        if (model != null) 'model': model,
+        if (provider != null) 'provider': provider,
         'source': source,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),

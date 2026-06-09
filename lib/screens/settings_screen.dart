@@ -658,7 +658,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 // ── About ──
                 _buildSection('关于', [
-                  _buildSettingRow('Hermes Desktop', 'v1.0.0'),
+                  _buildSettingRow('Hermes Desktop', 'v1.0.3'),
                   _buildSettingRow('Hermes Agent', _hermesVersion.split('\n').first),
                   _buildSettingRow('项目地址',
                       'github.com/lovesmile/hermes-desktop-ui'),
