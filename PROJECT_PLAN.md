@@ -104,9 +104,12 @@ Desktop App
 
 ### 会话管理
 
-- 备注功能（覆盖显示标题）
-- 按来源分组过滤
-- 消息实时存盘
+- [x] DisplaySession 架构（展示层/后端层解耦，切换模型不丢 title/remark）
+- [x] 展示层隔离（stable display_id + backendIdHistory）
+- [x] 旧版数据自动迁移（v1.0.3→v1.0.4 首次启动自动转 DisplaySession）
+- [x] 备注功能（覆盖显示标题）
+- [x] 按来源分组过滤
+- [x] 消息实时存盘
 
 ---
 
@@ -156,8 +159,8 @@ f:\flutter\bin\flutter.bat build windows --release
 build\windows\x64\runner\Release\hermes_desktop.exe
 
 # GitHub Release
-git tag v1.x.x && git push origin v1.x.x
-# Actions 自动构建 + zip 打包 + 上传 Release
+git tag v1.0.4 && git push origin v1.0.4
+# Actions 自动构建 + 安装包 + 上传 Release
 ```
 
 ---

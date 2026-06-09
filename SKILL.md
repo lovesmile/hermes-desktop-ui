@@ -1,7 +1,7 @@
 ---
 name: hermes-desktop-ui
 description: Flutter-based desktop management panel for Hermes Agent — view sessions, skills, models, logs, cron, and platform config through a GUI
-version: 1.0.0
+version: 1.0.4
 tags: [hermes, desktop, ui, gui, dashboard, management, flutter]
 homepage: https://github.com/lovesmile/hermes-desktop-ui
 ---
