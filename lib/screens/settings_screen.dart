@@ -5,6 +5,7 @@ import '../config/theme.dart';
 import '../services/gateway_service.dart';
 import '../services/config_service.dart';
 import '../services/connection_manager.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -41,6 +42,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Model config
   Map<String, String> _modelConfig = {'model': '-', 'provider': '-', 'base_url': '-'};
   String _hermesVersion = '-';
+  String _desktopVersion = '1.0.0';
 
   @override
   void initState() {
@@ -246,10 +248,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final content = await _configService.readConfig();
     final modelCfg = await _configService.readModelConfig();
     final version = await _detectHermesVersion();
+    final pkg = await PackageInfo.fromPlatform();
     setState(() {
       _configContent = content;
       _modelConfig = modelCfg;
       _hermesVersion = version;
+      _desktopVersion = pkg.version;
       _loading = false;
     });
   }
@@ -658,7 +662,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 // ── About ──
                 _buildSection('关于', [
-                  _buildSettingRow('Hermes Desktop', 'v1.0.3'),
+                  _buildSettingRow('Hermes Desktop', 'v$_desktopVersion'),
                   _buildSettingRow('Hermes Agent', _hermesVersion.split('\n').first),
                   _buildSettingRow('项目地址',
                       'github.com/lovesmile/hermes-desktop-ui'),
