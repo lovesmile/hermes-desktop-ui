@@ -80,8 +80,10 @@ jobs:
           # Download Inno Setup
           Invoke-WebRequest -Uri "https://jrsoftware.org/download.php/is.exe" -OutFile "$env:TEMP\is.exe"
           Start-Process -Wait -FilePath "$env:TEMP\is.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=$env:TEMP\is"
-          # Compile installer
-          & "$env:TEMP\is\ISCC.exe" installer.iss
+          # Compile installer with version from tag
+          $ver = "${{ github.ref_name }}" -replace '^v', ''
+          Write-Output "Installer version: $ver"
+          & "$env:TEMP\is\ISCC.exe" "/DMyAppVersion=$ver" installer.iss
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
@@ -93,7 +95,7 @@ jobs:
             # Hermes Desktop ${{ github.ref_name }}
 
             ## 一键安装（推荐）
-            - [HermesDesktop-Setup-${{ github.ref_name }}.exe](installer/HermesDesktop-Setup-${{ github.ref_name }}.exe)
+            - [HermesDesktop-Setup-${{ github.ref_name != '' && github.ref_name }}.exe](installer/HermesDesktop-Setup-${{ github.ref_name != '' && github.ref_name }}.exe)
 
             下载安装包，双击安装，打开即用。内置 Hermes Agent，无需额外配置。
 

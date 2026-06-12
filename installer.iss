@@ -1,8 +1,11 @@
 ; Hermes Desktop + Hermes Agent 一键安装包
 ; 使用 Inno Setup 编译: iscc installer.iss
 
+; 版本号：CI 通过 -DMyAppVersion= 传入，本地编译默认为 1.0.0
+#ifndef MyAppVersion
+#define MyAppVersion "1.0.0"
+#endif
 #define MyAppName "Hermes Desktop"
-#define MyAppVersion "1.0.4"
 #define MyAppPublisher "Nous Research"
 
 [Setup]
