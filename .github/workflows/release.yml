@@ -29,20 +29,31 @@ jobs:
         shell: pwsh
         run: |
           # 从 VS 安装目录复制 VC++ CRT DLL 到构建输出
-          # 这样 Inno Setup 打包时会一并包含，目标机无需单独装 VC++ redist
-          $redistDir = Resolve-Path "C:\Program Files\Microsoft Visual Studio\2022\*\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" | Select-Object -First 1
+          # 找不到 VS 时用 System32 回退（GitHub Actions runner 上有）
+          $redistDir = Resolve-Path "C:\Program Files\Microsoft Visual Studio\2022\*\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($redistDir) {
-            Copy-Item "$redistDir\msvcp140.dll"    -Destination build\windows\x64\runner\Release\
-            Copy-Item "$redistDir\msvcp140_1.dll"  -Destination build\windows\x64\runner\Release\
-            Copy-Item "$redistDir\vcruntime140.dll" -Destination build\windows\x64\runner\Release\
-            Copy-Item "$redistDir\vcruntime140_1.dll" -Destination build\windows\x64\runner\Release\
+            Copy-Item "$redistDir\msvcp140.dll"    -Destination build\windows\x64\runner\Release\ -ErrorAction Stop
+            Copy-Item "$redistDir\msvcp140_1.dll"  -Destination build\windows\x64\runner\Release\ -ErrorAction Stop
+            Copy-Item "$redistDir\vcruntime140.dll" -Destination build\windows\x64\runner\Release\ -ErrorAction Stop
+            Copy-Item "$redistDir\vcruntime140_1.dll" -Destination build\windows\x64\runner\Release\ -ErrorAction Stop
             Write-Output "Copied VC++ CRT DLLs from $redistDir"
           } else {
-            Write-Output "VC++ redist not found, trying System32 fallback..."
-            Copy-Item C:\Windows\System32\msvcp140.dll    -Destination build\windows\x64\runner\Release\ -ErrorAction SilentlyContinue
-            Copy-Item C:\Windows\System32\msvcp140_1.dll  -Destination build\windows\x64\runner\Release\ -ErrorAction SilentlyContinue
-            Copy-Item C:\Windows\System32\vcruntime140.dll -Destination build\windows\x64\runner\Release\ -ErrorAction SilentlyContinue
-            Copy-Item C:\Windows\System32\vcruntime140_1.dll -Destination build\windows\x64\runner\Release\ -ErrorAction SilentlyContinue
+            Write-Output "VC++ redist dir not found, fallback to System32..."
+            $sys32Files = @('msvcp140.dll','msvcp140_1.dll','vcruntime140.dll','vcruntime140_1.dll')
+            $allOk = $true
+            foreach ($f in $sys32Files) {
+              $src = "C:\Windows\System32\$f"
+              if (Test-Path $src) {
+                Copy-Item $src -Destination build\windows\x64\runner\Release\ -ErrorAction Stop
+                Write-Output "  Copied $f from System32"
+              } else {
+                Write-Output "  WARNING: $f not found in System32 either"
+                $allOk = $false
+              }
+            }
+            if (-not $allOk) {
+              Write-Output "Some VC++ DLLs missing — target machines without redist may crash"
+            }
           }
 
       - name: Setup Python
