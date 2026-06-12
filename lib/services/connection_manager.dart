@@ -72,6 +72,7 @@ class ConnectionManager {
 
   String _wslDistro = 'Ubuntu';
   String get wslDistro => _wslDistro;
+  String _wslIp = 'localhost';
 
   Timer? _healthTimer;
 
@@ -162,7 +163,8 @@ class ConnectionManager {
       }
     } else if (mode == ConnectionMode.embedded) {
       await switchToEmbedded();
-    } else {
+    } else if (mode == ConnectionMode.local) {
+      await detectWslIp();
       await switchToLocal();
     }
   }
@@ -729,6 +731,7 @@ echo "NO_METHOD"
   }
 
   Future<void> switchToLocal() async {
+    await detectWslIp();
     final desktopConfig = await ConfigService().readDesktopConfig();
     final localCfg = (desktopConfig['local'] as Map?) ?? {};
     final localPort = localCfg['gateway_port'] as int? ?? 8642;
@@ -1058,8 +1061,12 @@ echo "NO_METHOD"
 
   static String remoteNamespaceOf(SshConfig c) =>
       '${c.user}_${c.host}'.replaceAll('.', '_');
-  String get gatewayUrl =>
-      'http://localhost:${_tunnelPort > 0 ? _tunnelPort : state.port}';
+  String get gatewayUrl {
+    final host = state.mode == ConnectionMode.local && _wslIp != 'localhost'
+        ? _wslIp
+        : 'localhost';
+    return 'http://$host:${_tunnelPort > 0 ? _tunnelPort : state.port}';
+  }
 
   Future<int> _findFreePort() async {
     try {
@@ -1087,6 +1094,32 @@ echo "NO_METHOD"
     } catch (_) {
       return ['Ubuntu'];
     }
+  }
+
+  /// 检测 WSL2 的 IP 地址（Windows 连 WSL2 需要这个而不是 localhost）
+  Future<void> detectWslIp() async {
+    try {
+      final r = await Process.run('wsl.exe', ['hostname', '-I']);
+      if (r.exitCode == 0) {
+        final out = utf8
+            .decode(r.stdout as List<int>, allowMalformed: true)
+            .trim()
+            .replaceAll('\x00', '');
+        // wsl hostname -I 可以返回多个 IP 空格分隔，取第一个
+        final ip = out.split(RegExp(r'\s+')).firstWhere(
+              (s) => s.contains('.'),
+              orElse: () => '',
+            );
+        if (ip.isNotEmpty && ip.contains('.')) {
+          _wslIp = ip;
+          debugPrint('[ConnectionManager] WSL2 IP: $_wslIp');
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('[ConnectionManager] WSL IP detection failed: $e');
+    }
+    _wslIp = 'localhost';
   }
 
   Future<void> setWslDistro(String d) async {
