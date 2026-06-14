@@ -18,6 +18,7 @@ import 'screens/models_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/setup_screen.dart';
 import 'screens/file_browser_screen.dart';
+import 'screens/skills_store_screen.dart';
 import 'services/snack_service.dart';
 
 /// 单实例锁 — 绑定到本地端口，第二个实例绑定失败则退出
@@ -165,6 +166,7 @@ class MainShellState extends State<MainShell> {
     (Icons.chat_outlined, Icons.chat, '聊天'),
     (Icons.schedule_outlined, Icons.schedule, '定时'),
     (Icons.memory_outlined, Icons.memory, '模型与技能'),
+    (Icons.store_outlined, Icons.store, '技能商店'),
     (Icons.folder_outlined, Icons.folder, '文件'),
     (Icons.devices_outlined, Icons.devices, '平台'),
     (Icons.article_outlined, Icons.article, '日志'),
@@ -452,6 +454,7 @@ class MainShellState extends State<MainShell> {
                             const ChatScreen(),
                             const CronScreen(),
                             ModelsScreen(onNavigate: navigateTo),
+                            SkillsStoreScreen(onNavigate: navigateTo),
                             const FileBrowserScreen(),
                             const PlatformsScreen(),
                             const LogsScreen(),
