@@ -113,7 +113,7 @@ class RegistryService {
       allowFailure: true,
     );
     if (mkdirResult.exitCode != 0) {
-      return '创建目录失败: ${mkdirResult.stderr}';
+      return '创建目录失败: ${mkdirResult.stdout}';
     }
 
     // 步骤 2：判断安装模式
@@ -123,10 +123,9 @@ class RegistryService {
         'cd "${destPath.substring(0, destPath.lastIndexOf('/'))}" && '
             'git clone --depth 1 "${skill.repoUrl}" "${skill.id}" 2>&1',
         allowFailure: true,
-        timeout: 60,
       );
       if (cloneResult.exitCode != 0) {
-        return '克隆仓库失败: ${cloneResult.stderr}';
+        return '克隆仓库失败: ${cloneResult.stdout}';
       }
     } else {
       // Monorepo 模式：克隆到 /tmp，再移动子目录
@@ -134,10 +133,9 @@ class RegistryService {
       final cloneResult = await cm.runShell(
         'git clone --depth 1 "${skill.repoUrl}" "$tmpPath" 2>&1',
         allowFailure: true,
-        timeout: 60,
       );
       if (cloneResult.exitCode != 0) {
-        return '克隆仓库失败: ${cloneResult.stderr}';
+        return '克隆仓库失败: ${cloneResult.stdout}';
       }
 
       // 移动子目录
@@ -146,7 +144,7 @@ class RegistryService {
         allowFailure: true,
       );
       if (moveResult.exitCode != 0) {
-        return '提取技能目录失败: ${moveResult.stderr}';
+        return '提取技能目录失败: ${moveResult.stdout}';
       }
     }
 
@@ -163,7 +161,7 @@ class RegistryService {
       allowFailure: true,
     );
     if (result.exitCode != 0) {
-      return '删除失败: ${result.stderr}';
+      return '删除失败: ${result.stdout}';
     }
     return null;
   }
