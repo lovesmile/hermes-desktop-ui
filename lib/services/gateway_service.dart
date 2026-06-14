@@ -84,7 +84,7 @@ class GatewayService {
     try {
       _resetClient();
       final request = await _client
-          .getUrl(Uri.parse('$_baseUrl/api/status'))
+          .getUrl(Uri.parse('$_baseUrl/health'))
           .timeout(const Duration(seconds: 5));
       await _applyAuth(request);
 

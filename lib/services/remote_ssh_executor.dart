@@ -38,9 +38,10 @@ class RemoteSshExecutor extends SshExecutor {
     try {
       final tunnelArgs = <String>[
         '-L', '$_tunnelPort:localhost:$_remotePort',
+        '-o', 'ServerAliveInterval=30',
+        '-o', 'ServerAliveCountMax=3',
         '-o', 'ExitOnForwardFailure=yes',
         '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', 'ServerAliveInterval=30',
         '-N',
       ];
 

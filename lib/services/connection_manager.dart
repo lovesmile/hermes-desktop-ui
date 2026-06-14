@@ -361,9 +361,21 @@ class ConnectionManager {
   Future<bool> _checkHealth(int port) async {
     try {
       final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
-      final req = await client.getUrl(Uri.parse('http://localhost:$port/health'));
-      final res = await req.close();
-      return res.statusCode == 200;
+      // 先试 localhost（WSL2 端口转发）
+      try {
+        final req = await client.getUrl(Uri.parse('http://localhost:$port/health'));
+        final res = await req.close();
+        if (res.statusCode == 200) return true;
+      } catch (_) {}
+      // localhost 不通时试 WSL 真实 IP
+      if (_wslIp != 'localhost') {
+        try {
+          final req = await client.getUrl(Uri.parse('http://$_wslIp:$port/health'));
+          final res = await req.close();
+          return res.statusCode == 200;
+        } catch (_) {}
+      }
+      return false;
     } catch (_) {
       return false;
     }
@@ -744,26 +756,35 @@ echo "NO_METHOD"
     );
     await _wslBridge.connect();
 
-    final localApiKey = await _ensureApiKey();
-    // 如果 gateway 已在运行且 API_SERVER_KEY 一致，跳过重启
     bool restartOk = true;
     final alreadyHealthy = await _checkHealth(state.port);
     if (!alreadyHealthy) {
+      // 配置端口不通 → 自动检测 WSL 中 Gateway 实际端口
+      final detected = await _detectGatewayPort();
+      if (detected != null && detected != state.port) {
+        stateNotifier.value = state.copyWith(
+          port: detected,
+          message: '自动检测端口 $detected...',
+        );
+        final cfg = await ConfigService().readDesktopConfig();
+        cfg['local'] ??= <String, dynamic>{};
+        (cfg['local'] as Map<String, dynamic>)['gateway_port'] = detected;
+        await ConfigService().writeDesktopConfig(cfg);
+        if (await _checkHealth(detected)) {
+          await _applyConnectionContext(namespace: 'local', serverId: 'local');
+          stateNotifier.value = state.copyWith(status: ConnStatus.connected, message: '连接成功');
+          return;
+        }
+      }
+      final localApiKey = await _ensureApiKey();
       restartOk = await _restartLocalGatewayShell(localApiKey);
       await Future.delayed(const Duration(seconds: 3));
-    } else {
-      final currentKey = await _wslBridge.exec(
-        r"grep '^API_SERVER_KEY=' ~/.hermes/.env 2>/dev/null | cut -d= -f2",
-      ).then((r) => r.stdout.trim());
-      if (currentKey != localApiKey) {
-        restartOk = await _restartLocalGatewayShell(localApiKey);
-        await Future.delayed(const Duration(seconds: 3));
-      }
     }
+    // Gateway 已健康运行：跳过重启，避免中断正在进行的任务。
+    // API_SERVER_KEY 不一致时静待下次自然重启即可。
 
     await _applyConnectionContext(namespace: 'local', serverId: 'local');
     if (restartOk) {
-      // 等待 gateway 就绪（最长 20s），不设 error — 健康检查会兜底
       for (int i = 0; i < 20; i++) {
         await Future.delayed(const Duration(seconds: 1));
         if (await _checkHealth(state.port)) {
@@ -771,6 +792,11 @@ echo "NO_METHOD"
           return;
         }
       }
+      // 20s 仍未就绪 → 报告错误，不留"连接中"悬空
+      stateNotifier.value = state.copyWith(
+        status: ConnStatus.error,
+        message: 'Gateway 未响应，请确认 WSL 中 hermes gateway 是否正常运行',
+      );
     } else {
       stateNotifier.value = state.copyWith(
         status: ConnStatus.error,
@@ -1099,10 +1125,11 @@ echo "NO_METHOD"
   /// 检测 WSL2 的 IP 地址（Windows 连 WSL2 需要这个而不是 localhost）
   Future<void> detectWslIp() async {
     try {
-      final r = await Process.run('wsl.exe', ['hostname', '-I']);
+      final r = await Process.run('wsl.exe', ['-d', _wslDistro, 'hostname', '-I']);
       if (r.exitCode == 0) {
-        final out = utf8
-            .decode(r.stdout as List<int>, allowMalformed: true)
+        final out = (r.stdout is List<int>
+            ? utf8.decode(r.stdout as List<int>, allowMalformed: true)
+            : r.stdout as String)
             .trim()
             .replaceAll('\x00', '');
         // wsl hostname -I 可以返回多个 IP 空格分隔，取第一个

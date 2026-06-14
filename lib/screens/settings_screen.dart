@@ -24,6 +24,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // Connection mode
   ConnectionMode _selectedMode = ConnectionMode.local;
+  bool _isEditingMode = false; // 用户正在编辑模式选择时，不响应后台状态更新
 
   // SSH form controllers
   final _hostController = TextEditingController();
@@ -73,7 +74,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _prevConnStatus = state.status;
 
     setState(() {
-      _selectedMode = state.mode;
+      // 用户正在编辑模式选择时不覆盖，等其他字段更新后再切
+      if (!_isEditingMode) {
+        _selectedMode = state.mode;
+      }
       _connectionMessage = state.message;
       _connectionSuccess = state.status == ConnStatus.connected;
     });
@@ -155,6 +159,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _saveConnectionConfig() async {
+    _isEditingMode = false;
     final config = await _configService.readDesktopConfig();
     final modeStr = _selectedMode == ConnectionMode.remote
         ? 'remote'
@@ -524,14 +529,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: 16),
                 ],
 
-                // ── Port Override Section (内嵌自动分配端口，无需配置) ──
-                if (_selectedMode != ConnectionMode.embedded)
-                  _buildSection('端口设置', [
-                    _buildPortOverrideField(colorScheme),
-                  ]),
-                if (_selectedMode != ConnectionMode.embedded) const SizedBox(height: 16),
 
-                // ── Apply Button ──
                 Row(
                   children: [
                     Expanded(
@@ -741,6 +739,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (_selectedMode == value) return;
         setState(() {
           _selectedMode = value;
+          _isEditingMode = true;
           _connectionSuccess = null;
           _connectionMessage = null;
           if (value == ConnectionMode.local || value == ConnectionMode.remote) {

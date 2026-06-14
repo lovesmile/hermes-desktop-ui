@@ -1290,15 +1290,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             tooltip: '添加文件',
                           ),
                           Expanded(
-                            child: Focus(
-                              onKeyEvent: (node, event) {
-                                if (event is KeyDownEvent &&
-                                    event.logicalKey == LogicalKeyboardKey.keyV &&
-                                    HardwareKeyboard.instance.isControlPressed) {
-                                  _pasteImageFromClipboard();
-                                  return KeyEventResult.handled;
-                                }
-                                return KeyEventResult.ignored;
+                            child: CallbackShortcuts(
+                              bindings: {
+                                const SingleActivator(LogicalKeyboardKey.keyV, control: true, shift: true): _pasteImageFromClipboard,
                               },
                               child: TextField(
                                 key: ValueKey('input_${_activeDisplaySession?.id ?? 'new'}'),
