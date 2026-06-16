@@ -1136,7 +1136,7 @@ class _PlatformDetailSheetState extends State<_PlatformDetailSheet> {
                     _wechatQrUrl!,
                     style: TextStyle(
                       fontSize: 10,
-                      fontFamily: 'monospace',
+                      fontFamily: 'JetBrainsMono',
                       color: cs.onSurfaceVariant,
                     ),
                     maxLines: 2,

@@ -402,20 +402,42 @@ class LocalDatabase {
 
   String _getPreview(List? messages) {
     if (messages == null || messages.isEmpty) return '';
-    // 倒序找第一个有非空内容的消息，兼容 content 为 String/Map 等多种格式
+    // 倒序找第一个适合做预览的消息
     for (int i = messages.length - 1; i >= 0; i--) {
       final m = messages[i] as Map<String, dynamic>? ?? {};
+      final role = m['role'] as String? ?? '';
+      // 跳过 tool 消息
+      if (role == 'tool') continue;
       final raw = m['content'];
       String text;
       if (raw is String) {
         text = raw;
       } else if (raw is Map) {
         text = raw.toString();
+      } else if (raw is List) {
+        // 多段内容（OpenAI 格式），拼接各段的文本
+        text = raw.map((part) {
+          if (part is Map) {
+            return (part['text'] as String?) ?? part.toString();
+          }
+          return part.toString();
+        }).join(' ');
       } else {
         text = raw?.toString() ?? '';
       }
       text = text.trim();
       if (text.isNotEmpty) return text.length > 100 ? '${text.substring(0, 100)}...' : text;
+
+      // content 为空但有 tool_calls（如函数调用助手消息），用 tool call 名作预览
+      final toolCalls = m['tool_calls'] as List?;
+      if (toolCalls != null && toolCalls.isNotEmpty) {
+        final firstCall = toolCalls.first as Map<String, dynamic>? ?? {};
+        final funcName = (firstCall['function'] as Map?)?['name'] as String? ?? '';
+        if (funcName.isNotEmpty) {
+          return '[调用工具: $funcName]';
+        }
+        return '[工具调用]';
+      }
     }
     return '';
   }

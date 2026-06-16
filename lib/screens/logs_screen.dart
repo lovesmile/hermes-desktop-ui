@@ -322,7 +322,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                 '${log.timestamp.hour.toString().padLeft(2, '0')}:${log.timestamp.minute.toString().padLeft(2, '0')}:${log.timestamp.second.toString().padLeft(2, '0')}',
                 style: TextStyle(
                   fontSize: 11,
-                  fontFamily: 'monospace',
+                  fontFamily: 'JetBrainsMono',
                   color: cs.onSurfaceVariant,
                 ),
               ),
@@ -339,7 +339,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 10,
-                  fontFamily: 'monospace',
+                  fontFamily: 'JetBrainsMono',
                   color: _levelColor(log.level),
                   fontWeight: FontWeight.w500,
                 ),
@@ -351,7 +351,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                 log.message,
                 style: TextStyle(
                   fontSize: 12,
-                  fontFamily: 'monospace',
+                  fontFamily: 'JetBrainsMono',
                   color: cs.onSurface,
                   height: 1.4,
                 ),

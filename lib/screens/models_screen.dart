@@ -346,7 +346,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text('v$version', style: TextStyle(fontSize: 11,
-                            fontFamily: 'monospace',
+                            fontFamily: 'JetBrainsMono',
                             color: Theme.of(context).colorScheme.onSurfaceVariant)),
                       ),
                     const SizedBox(width: 4),
@@ -655,7 +655,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
           ))),
           Expanded(child: Text(value, style: TextStyle(
             fontSize: 13,
-            fontFamily: 'monospace',
+            fontFamily: 'JetBrainsMono',
             color: Theme.of(context).colorScheme.onSurface,
           ))),
         ],

@@ -344,7 +344,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
                       _currentPath,
                       style: TextStyle(
                         fontSize: 12,
-                        fontFamily: 'monospace',
+                        fontFamily: 'JetBrainsMono',
                         color: cs.onSurfaceVariant,
                       ),
                     ),
@@ -476,7 +476,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
                                     _previewContent,
                                     style: TextStyle(
                                       fontSize: 12,
-                                      fontFamily: 'monospace',
+                                      fontFamily: 'JetBrainsMono',
                                       color: cs.onSurface,
                                       height: 1.5,
                                     ),

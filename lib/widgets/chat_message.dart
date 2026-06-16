@@ -126,7 +126,7 @@ class ChatMessageWidget extends StatelessWidget {
                         code: TextStyle(
                           color: scheme.tertiary,
                           fontSize: 13,
-                          fontFamily: 'monospace',
+                          fontFamily: 'JetBrainsMono',
                         ),
                         codeblockDecoration: BoxDecoration(
                           color: isDark ? Colors.white10 : Colors.black12,
@@ -274,7 +274,7 @@ class _ToolCallCard extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               color: scheme.primary,
-              fontFamily: 'monospace',
+              fontFamily: 'JetBrainsMono',
             ),
           ),
           children: [
@@ -288,7 +288,7 @@ class _ToolCallCard extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 11,
                       color: scheme.onSurfaceVariant,
-                      fontFamily: 'monospace',
+                      fontFamily: 'JetBrainsMono',
                     ),
                   ),
                   if (result != null) ...[
@@ -298,7 +298,7 @@ class _ToolCallCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 11,
                         color: scheme.primary,
-                        fontFamily: 'monospace',
+                        fontFamily: 'JetBrainsMono',
                       ),
                     ),
                   ],

@@ -546,7 +546,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Text(value,
               style: TextStyle(
                   fontSize: 13,
-                  fontFamily: 'monospace',
+                  fontFamily: 'JetBrainsMono',
                   fontWeight: FontWeight.w500,
                   color: cs.onSurface),
               maxLines: 1,
@@ -591,7 +591,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           Expanded(
             child: Text(value,
-                style: TextStyle(fontSize: 13, fontFamily: 'monospace', color: cs.onSurface)),
+                style: TextStyle(fontSize: 13, fontFamily: 'JetBrainsMono', color: cs.onSurface)),
           ),
         ],
       ),

@@ -119,7 +119,7 @@ class _HermesDesktopAppState extends State<HermesDesktopApp> {
   Future<void> _loadThemeColor() async {
     final config = await ConfigService().readDesktopConfig();
     final saved = config['theme_color'] as int? ?? 0;
-    themeColorNotifier.value = saved.clamp(0, AppTheme.seedColors.length - 1);
+    themeColorNotifier.value = saved.clamp(0, AppTheme.themeNames.length - 1);
   }
 
   @override

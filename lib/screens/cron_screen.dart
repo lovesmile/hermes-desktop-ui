@@ -1266,7 +1266,7 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
             if (job.prompt.isNotEmpty) ...[
               const SizedBox(height: 8),
               SelectableText(job.prompt,
-                  style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: cs.onSurfaceVariant)),
+                  style: TextStyle(fontSize: 12, fontFamily: 'JetBrainsMono', color: cs.onSurfaceVariant)),
             ],
             const SizedBox(height: 12),
             Row(

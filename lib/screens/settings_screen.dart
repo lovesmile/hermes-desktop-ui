@@ -413,7 +413,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               child: Text(
                 '~/.hermes/config.yaml',
-                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface, fontFamily: 'monospace'),
+                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface, fontFamily: 'JetBrainsMono'),
               ),
             ),
           ],
@@ -452,7 +452,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   expands: true,
                   textAlignVertical: TextAlignVertical.top,
                   style: TextStyle(
-                    fontFamily: 'monospace',
+                    fontFamily: 'JetBrainsMono',
                     fontSize: 12,
                     height: 1.5,
                     color: Theme.of(context).colorScheme.onSurface,
@@ -622,7 +622,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           subtitle: Text(url,
                               style: TextStyle(
                                   fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                  fontFamily: 'monospace')),
+                                  fontFamily: 'JetBrainsMono')),
                           trailing: const Icon(Icons.edit_outlined, size: 20),
                           onTap: () => _showGatewayUrlEditor(url),
                           contentPadding: EdgeInsets.zero,
@@ -875,7 +875,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(width: 16),
           Text(
             '端口: $portText',
-            style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant, fontFamily: 'monospace'),
+            style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant, fontFamily: 'JetBrainsMono'),
           ),
           const Spacer(),
           if (state.message.isNotEmpty)
@@ -1331,7 +1331,7 @@ class _EnvEditorDialogState extends State<_EnvEditorDialog> {
                 maxLines: null,
                 expands: true,
                 textAlignVertical: TextAlignVertical.top,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.5),
+                style: const TextStyle(fontFamily: 'JetBrainsMono', fontSize: 12, height: 1.5),
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   contentPadding: EdgeInsets.all(12),
