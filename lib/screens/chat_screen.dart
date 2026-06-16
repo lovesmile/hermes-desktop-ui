@@ -12,8 +12,8 @@ import '../models/session.dart';
 import '../models/display_session.dart';
 import '../widgets/chat_message.dart';
 import '../widgets/chat_drop_zone.dart';
-import '../widgets/model_switcher.dart';
 
+/// Hermes AI 聊天界面
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -497,102 +497,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _inputController.text = '';
   }
 
-  /// 构建发送给 API 的模型名（带 provider 前缀）。
-  /// Gateway API 期望格式为 provider/model_name（如 deepseek/deepseek-v4-flash）。
-  /// 如果 model 已含 `/`（如 anthropic/claude-sonnet-4）则不重复加前缀。
-  String? _buildModelName() {
-    final m = _currentSessionModel;
-    if (m == null || m.isEmpty) return null;
-    final p = _currentSessionProvider;
-    if (p == null || p.isEmpty) return m; // 无 provider 信息，原样返回
-    if (m.contains('/')) return m; // 已含前缀（如 anthropic/claude-sonnet-4）
-    return '$p/$m';
-  }
-
-  void _onModelSelected(ModelSelectionResult result) async {
-    if (result.asGlobal) {
-      // 对话框已保存配置并重启 Gateway，这里只刷新 UI
-      setState(() {
-        _currentSessionModel = result.model;
-        _currentSessionProvider = result.provider;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('全局默认模型已切换为 ${result.model}，Gateway 重启中...'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-      }
-    } else {
-      // 应用到当前会话
-      final displayId = _activeDisplaySession?.id;
-      if (displayId == null) {
-        // 没有活跃会话（新对话），直接切换无副作用
-        setState(() {
-          _currentSessionModel = result.model;
-          _currentSessionProvider = result.provider;
-        });
-        return;
-      }
-
-      // 有活跃会话：需要确认用户知道上下文会丢失
-      final proceed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('切换会话模型'),
-          content: const Text(
-            '切换模型后，AI 将不记得之前的对话内容（上下文丢失），'
-            '但历史消息仍可查看。\n\n'
-            '下一消息起生效。确定要继续吗？',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('确定切换'),
-            ),
-          ],
-        ),
-      );
-
-      if (proceed != true) return;
-
-      // 保存模型
-      await _localDb.updateSessionModel(displayId, result.model, provider: result.provider);
-      // 更新展示会话
-      final ds = await _localDb.getDisplaySession(displayId);
-      if (ds != null) {
-        await _localDb.updateDisplaySession(ds.copyWith(
-          model: result.model,
-          provider: result.provider,
-          updatedAt: DateTime.now(),
-        ));
-      }
-      setState(() {
-        _currentSessionModel = result.model;
-        _currentSessionProvider = result.provider;
-        if (_activeDisplaySession != null) {
-          _activeDisplaySession = _activeDisplaySession!.copyWith(
-            model: result.model,
-            provider: result.provider,
-          );
-        }
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('会话模型已切换为 ${result.model}，下一消息起生效'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _pickFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
@@ -787,8 +691,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ? _attachedFiles.map((m) => Map<String, String>.from(m)).toList()
           : null;
       final stream = _gateway.chatStream(apiText, sessionId: gatewayIdForApi,
-          attachments: filesForApi,
-          model: _buildModelName());
+          attachments: filesForApi);
 
       // ★ 如果此会话已有活跃流，先取消旧的（防止重复）
       final oldSid = displayIdAtSend ?? '__pending_new__';
@@ -1063,11 +966,6 @@ class _ChatScreenState extends State<ChatScreen> {
         backgroundColor: Theme.of(context).colorScheme.surfaceContainerLow,
         title: Text(_activeDisplaySession?.displayTitle ?? '新对话'),
         actions: [
-          ModelSwitcher(
-            currentModel: _currentSessionModel,
-            currentProvider: _currentSessionProvider,
-            onModelSelected: _onModelSelected,
-          ),
           if (_activeDisplaySession != null)
             IconButton(
               icon: const Icon(Icons.close),

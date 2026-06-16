@@ -228,6 +228,7 @@ class LocalDatabase {
   }
 
   /// 更新会话的模型和 provider
+  @Deprecated('Per-session model switching has been removed. Use global config only.')
   Future<void> updateSessionModel(String sessionId, String? model, {String? provider}) async {
     final db = await _read();
     final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};

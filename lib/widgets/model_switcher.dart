@@ -7,12 +7,10 @@ import '../services/gateway_service.dart';
 class ModelSelectionResult {
   final String model;
   final String provider;
-  final bool asGlobal; // true=写入配置+重启, false=仅当前会话
 
   const ModelSelectionResult({
     required this.model,
     required this.provider,
-    this.asGlobal = false,
   });
 }
 
@@ -167,16 +165,6 @@ class _ModelSelectionDialogState extends State<_ModelSelectionDialog> {
     });
   }
 
-  Future<void> _applyToSession() async {
-    final m = _modelCtrl.text.trim();
-    if (m.isEmpty) return;
-    Navigator.of(context).pop(ModelSelectionResult(
-      model: m,
-      provider: _provider,
-      asGlobal: false,
-    ));
-  }
-
   Future<void> _saveAndRestart() async {
     final m = _modelCtrl.text.trim();
     final b = _baseUrlCtrl.text.trim();
@@ -294,7 +282,6 @@ class _ModelSelectionDialogState extends State<_ModelSelectionDialog> {
       Navigator.of(context).pop(ModelSelectionResult(
         model: m,
         provider: _provider,
-        asGlobal: true,
       ));
     } catch (e) {
       if (mounted) {
@@ -381,8 +368,7 @@ class _ModelSelectionDialogState extends State<_ModelSelectionDialog> {
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        '「应用到会话」仅记录模型名，不修改配置文件。'
-                        '「保存配置」会写入 config.yaml + .env 并重启 Gateway。',
+                        '修改后保存配置并重启 Gateway 生效。',
                         style: TextStyle(fontSize: 11, color: scheme.primary),
                       ),
                     ),
@@ -397,11 +383,6 @@ class _ModelSelectionDialogState extends State<_ModelSelectionDialog> {
         TextButton(
           onPressed: () => Navigator.of(context).pop(null),
           child: const Text('取消'),
-        ),
-        OutlinedButton.icon(
-          onPressed: _saving ? null : _applyToSession,
-          icon: const Icon(Icons.check, size: 16),
-          label: const Text('应用到会话'),
         ),
         FilledButton.icon(
           onPressed: _saving ? null : _saveAndRestart,
