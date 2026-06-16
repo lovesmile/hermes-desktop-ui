@@ -639,10 +639,19 @@ class _ChatScreenState extends State<ChatScreen> {
               : null,
         );
       }
-      // 更新展示会话的 updatedAt
-      await _localDb.updateDisplaySession(
-        _activeDisplaySession!.copyWith(updatedAt: DateTime.now()),
+      // 更新展示会话的 updatedAt 和预览
+      final userPreview = text.length > 100 ? '${text.substring(0, 100)}...' : text;
+      final updatedDs = _activeDisplaySession!.copyWith(
+        preview: userPreview,
+        updatedAt: DateTime.now(),
       );
+      await _localDb.updateDisplaySession(updatedDs);
+      setState(() {
+        final idx = _displaySessions.indexWhere((s) => s.id == _activeDisplaySession!.id);
+        if (idx >= 0) _displaySessions[idx] = updatedDs;
+        final didx = _displayedDisplaySessions.indexWhere((s) => s.id == _activeDisplaySession!.id);
+        if (didx >= 0) _displayedDisplaySessions[didx] = updatedDs;
+      });
     }
 
     // 本地显示用户消息（纯附件无文字时显示附件名）
@@ -776,12 +785,14 @@ class _ChatScreenState extends State<ChatScreen> {
               await _localDb.deleteSession(tempBackendId);
               // 更新 DisplaySession
               await _localDb.switchBackendId(latestDs.id, newSessionId);
+              final preview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
               final updatedDs = latestDs.copyWith(
                 currentBackendId: newSessionId,
                 backendIdHistory: latestDs.backendIdHistory,
+                preview: preview,
                 updatedAt: DateTime.now(),
               );
-              final preview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
+              await _localDb.updateDisplaySession(updatedDs);
               _messageCache[latestDs.id] = [
                 _Message(text: text, isUser: true, timestamp: DateTime.now(),
                     attachments: pendingAttachments),
@@ -835,10 +846,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
                 // 切换 DisplaySession
                 await _localDb.switchBackendId(displayIdAtSend, newSessionId);
+                final responsePreview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
                 final updatedDs = ds.copyWith(
                   currentBackendId: newSessionId,
+                  preview: responsePreview,
                   updatedAt: DateTime.now(),
                 );
+                await _localDb.updateDisplaySession(updatedDs);
                 final cached = _messageCache[displayIdAtSend];
                 if (cached != null) {
                   cached.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
@@ -866,8 +880,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (cached != null) {
                   cached.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
                 }
+                // 更新预览
+                final responsePreview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
+                final previewUpdated = ds.copyWith(
+                  preview: responsePreview,
+                  updatedAt: DateTime.now(),
+                );
+                await _localDb.updateDisplaySession(previewUpdated);
                 if (mounted) {
                   setState(() {
+                    final idx = _displaySessions.indexWhere((s) => s.id == displayIdAtSend);
+                    if (idx >= 0) _displaySessions[idx] = previewUpdated;
+                    final didx = _displayedDisplaySessions.indexWhere((s) => s.id == displayIdAtSend);
+                    if (didx >= 0) _displayedDisplaySessions[didx] = previewUpdated;
                     if (_activeDisplaySession?.id == displayIdAtSend) {
                       if (_segmentsCommitted < response.length) {
                         _messages.add(_Message(text: response.substring(_segmentsCommitted), isUser: false, timestamp: DateTime.now()));
