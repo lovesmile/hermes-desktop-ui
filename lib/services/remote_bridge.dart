@@ -33,14 +33,4 @@ class RemoteBridge implements HermesBridge {
     }
   }
 
-  @override
-  Future<bool> killProcess(int pid) async {
-    // 远程 SSH 无法直接杀本地进程，通过 pkill 发送信号
-    try {
-      await _executor.exec('kill -9 $pid 2>/dev/null || true');
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
 }

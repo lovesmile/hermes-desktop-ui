@@ -9,9 +9,6 @@ class EmbeddedBridge implements HermesBridge {
   final String bundlePath;
   bool _connected = false;
 
-  // 跟踪最近一次启动的进程 PID（用于 killProcess）
-  static int? _lastPid;
-
   @override
   bool get isConnected => _connected;
 
@@ -39,14 +36,4 @@ class EmbeddedBridge implements HermesBridge {
     );
   }
 
-  @override
-  Future<bool> killProcess(int pid) async {
-    try {
-      // Windows: 使用 taskkill /pid /T ( /T 杀进程树)
-      final result = await Process.run('taskkill', ['/pid', pid.toString(), '/T', '/F']);
-      return result.exitCode == 0;
-    } catch (_) {
-      return false;
-    }
-  }
 }

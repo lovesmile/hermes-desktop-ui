@@ -9,7 +9,6 @@ class WslBridge implements HermesBridge {
 
   String _distro;
   bool _connected = false;
-  int? _lastPid; // 跟踪最近一次启动的进程 PID
 
   void setDistro(String distro) => _distro = distro;
 
@@ -36,7 +35,6 @@ class WslBridge implements HermesBridge {
       'wsl.exe',
       ['-d', _distro, 'bash', '-s'],
     );
-    _lastPid = process.pid;
     // Pipe command via stdin — bash -c has a WSL+Dart variable assignment bug
     process.stdin.write(command);
     await process.stdin.close();
@@ -52,16 +50,5 @@ class WslBridge implements HermesBridge {
       stderr: utf8.decode(errBytes, allowMalformed: true).trim(),
       exitCode: exitCode,
     );
-  }
-
-  @override
-  Future<bool> killProcess(int pid) async {
-    try {
-      // WSL 中用 kill 命令杀进程
-      final result = await Process.run('wsl.exe', ['-d', _distro, 'kill', '-9', pid.toString()]);
-      return result.exitCode == 0;
-    } catch (_) {
-      return false;
-    }
   }
 }

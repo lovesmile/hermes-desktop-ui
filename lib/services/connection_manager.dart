@@ -101,11 +101,6 @@ class ConnectionManager {
     return '$userHome\\.hermes-desktop\\hermes';
   }
 
-  String get hermesDir {
-    final userHome = Platform.environment['USERPROFILE'] ?? '';
-    return '$userHome\\.hermes';
-  }
-
   Future<void> init() async {
     await ConfigService.ensureInitialized();
     final config = await ConfigService().readDesktopConfig();
@@ -186,11 +181,6 @@ class ConnectionManager {
       if (allowFailure) return (stdout: e.toString(), exitCode: 1);
       rethrow;
     }
-  }
-
-  /// 杀掉指定 PID 的进程（用于取消长时 shell 任务）
-  Future<bool> killProcess(int pid) async {
-    return _bridgeForMode(state.mode).killProcess(pid);
   }
 
   Future<String> resolveHermesHome() async {
