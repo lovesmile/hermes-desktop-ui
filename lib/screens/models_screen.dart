@@ -67,7 +67,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
           if (key == 'default' || key == 'model') {
             modelInfo['model'] = val;
           } else if (key == 'provider') {
-            modelInfo['provider'] = val;
+            modelInfo['provider'] = val.toLowerCase();
           } else if (key == 'base_url' || key == 'baseUrl') {
             modelInfo['base_url'] = val;
           }
@@ -79,7 +79,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
           }
           if (t.startsWith('provider:') && !modelInfo.containsKey('provider')) {
             final sep = t.indexOf(':');
-            modelInfo['provider'] = t.substring(sep + 1).trim();
+            modelInfo['provider'] = t.substring(sep + 1).trim().toLowerCase();
           }
           if ((t.startsWith('base_url:') || t.startsWith('baseUrl:')) && !modelInfo.containsKey('base_url')) {
             final sep = t.indexOf(':');
@@ -303,7 +303,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                   if (value == 'invoke') {
                     if (name.isNotEmpty) {
                       ChatScreen.skillInvocationNotifier.value = name;
-                      widget.onNavigate(1);
+                      widget.onNavigate(7);
                     }
                   } else if (value == 'delete') {
                     _confirmDeleteSkill(path, name);
@@ -369,7 +369,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
 
   /// 切换模型弹窗
   void _showModelSelector() {
-    String selectedProvider = _modelConfig['provider'] ?? 'deepseek';
+    String selectedProvider = (_modelConfig['provider'] ?? 'deepseek').toLowerCase();
+    // 如果配置的 provider 不在下拉列表里，兜底到第一个可用的
+    if (!allProviders.contains(selectedProvider)) {
+      selectedProvider = allProviders.first;
+    }
     String selectedModel = _modelConfig['model'] ?? 'deepseek-v4-flash';
     String baseUrl = _modelConfig['base_url'] ?? providerBaseUrls[selectedProvider] ?? '';
     bool showCustomModel = false;
