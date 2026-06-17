@@ -104,15 +104,17 @@ class GatewayService {
   // ═══════════════════════════════════════════
 
   Stream<String> chatStream(String message,
-      {String? sessionId, List<Map<String, String>>? attachments, String? model}) {
+      {String? sessionId, List<Map<String, String>>? attachments, String? model,
+      List<Map<String, String>>? history}) {
     final controller = StreamController<String>.broadcast();
-    _doChat(message, sessionId, controller, attachments: attachments, model: model);
+    _doChat(message, sessionId, controller, attachments: attachments, model: model, history: history);
     return controller.stream;
   }
 
   Future<void> _doChat(String message, String? sessionId,
       StreamController<String> controller,
-      {List<Map<String, String>>? attachments, String? model}) async {
+      {List<Map<String, String>>? attachments, String? model,
+      List<Map<String, String>>? history}) async {
     try {
       final uri = Uri.parse('$_baseUrl/v1/chat/completions');
       final request = await _client.postUrl(uri);
@@ -167,9 +169,13 @@ class GatewayService {
         userMessage = {'role': 'user', 'content': message};
       }
 
+      final allMessages = [
+        if (history != null) ...history,
+        userMessage,
+      ];
       final body = jsonEncode({
         'model': model ?? 'hermes-agent',
-        'messages': [userMessage],
+        'messages': allMessages,
         'stream': true,
       });
       request.add(utf8.encode(body));
@@ -190,25 +196,59 @@ class GatewayService {
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen(
-        (line) {
-          if (line.startsWith('data: ')) {
-            final data = line.substring(6).trim();
-            if (data == '[DONE]') {
-              controller.close();
-              return;
-            }
-            try {
-              final parsed = jsonDecode(data);
-              final delta = parsed['choices']?[0]?['delta'];
-              if (delta != null) {
-                final content = delta['content'] as String?;
-                if (content != null && content.isNotEmpty) {
-                  controller.add(content);
+        (rawLine) {
+          // 支持标准 SSE: "data: {...}" 和非标准直接 JSON 行
+          String line = rawLine.trim();
+          if (line.isEmpty) return;
+
+          bool isSSE = line.startsWith('data: ');
+          String jsonStr = isSSE ? line.substring(6).trim() : line;
+
+          if (jsonStr == '[DONE]') {
+            controller.close();
+            return;
+          }
+          try {
+            final parsed = jsonDecode(jsonStr);
+            // 检查 SSE 中的错误（model 不存在等）
+            if (parsed is Map) {
+              if (parsed.containsKey('error') && parsed['error'] is Map) {
+                final errMsg = parsed['error']['message'] ?? parsed['error']['code'] ?? '未知错误';
+                controller.addError('模型错误: $errMsg');
+                controller.close();
+                return;
+              }
+              // 兼容多种 content 字段路径
+              String? content;
+              final choices = parsed['choices'] as List?;
+              if (choices != null && choices.isNotEmpty) {
+                final choice = choices.first as Map?;
+                if (choice != null) {
+                  // OpenAI / 大多数兼容格式
+                  final delta = choice['delta'] as Map?;
+                  if (delta != null) content = delta['content'] as String?;
+                  // 部分厂商直接放在 message 里（非流式兼容）
+                  if (content == null) {
+                    final msg = choice['message'] as Map?;
+                    content = msg?['content'] as String?;
+                  }
+                  // Claude 等 delta.content 方式
+                  if (content == null) {
+                    content = delta?['content'] as String?;
+                  }
                 }
               }
-            } catch (_) {
-              // skip unparseable chunks
+              // OpenAI 兼容格式: message.content
+              if (content == null) {
+                final msg = parsed['message'] as Map?;
+                content = msg?['content'] as String?;
+              }
+              if (content != null && content.isNotEmpty) {
+                controller.add(content);
+              }
             }
+          } catch (_) {
+            // skip unparseable chunks
           }
         },
         onDone: () {
@@ -406,7 +446,7 @@ class GatewayService {
     'kimi': 'https://api.moonshot.cn/v1',
     'ollama': 'http://localhost:11434/v1',
     'glm': 'https://api.z.ai/api/paas/v4',
-    'minimax': 'https://api.minimax.io/v1',
+    'minimax': 'https://api.minimax.chat/v1',
     'arcee': 'https://api.arcee.ai/v1',
     'opencode-zen': 'https://opencode.ai/zen/v1',
     'opencode-go': 'https://opencode.ai/zen/go/v1',
@@ -461,7 +501,7 @@ class GatewayService {
       'glm-5', 'glm-5-flash',
     ],
     'minimax': [
-      'minimax-m2.5', 'minimax-m1', 'minimax-text-01',
+      'MiniMax-M2.7', 'MiniMax-M1', 'MiniMax-Text-01',
     ],
     'arcee': [
       'trinity-mini', 'trinity-large', 'trinity-medium',
