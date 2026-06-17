@@ -1,120 +1,266 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../models/session.dart';
 import '../models/display_session.dart';
 import 'config_service.dart';
-import 'connection_manager.dart';
 
 /// Desktop 客户端本地数据库
-/// 用 JSON 文件存储会话和消息，类似 IM 客户端本地存储
-/// 每次操作后立即持久化，重启不丢数据
-/// 支持 local/远程IP 两种模式，用不同 DB 文件隔离
+/// 使用 SQLite（sqflite_common_ffi）存储会话和消息
+/// 首次启动自动从旧 JSON 文件迁移数据
 class LocalDatabase {
   static final LocalDatabase _instance = LocalDatabase._();
   factory LocalDatabase() => _instance;
   LocalDatabase._();
 
+  Database? _db;
   String _mode = 'local';
 
   /// 切换连接模式，同时切换 DB 文件实现隔离
   Future<void> setMode(String mode) async {
     if (_mode == mode) return;
     _mode = mode;
-    _cache = null;
+    await _close();
   }
 
   String get _dbPath {
     final base = '${ConfigService.resolveHermesHome()}/desktop_db';
     final suffix = connectionModeToDbSuffix(_mode);
-    return suffix.isEmpty ? '${base}.json' : '${base}$suffix.json';
+    return suffix.isEmpty ? '$base.db' : '${base}_$suffix.db';
   }
 
   String connectionModeToDbSuffix(String mode) {
     if (mode == 'local') return '';
     if (mode == 'embedded') return '_embedded';
-    return '_${mode.replaceAll(RegExp(r'[^a-zA-Z0-9_\\-]'), '_')}';
+    return '_${mode.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_')}';
   }
 
-  Map<String, dynamic>? _cache;
+  // ── DB lifecycle ──
 
-  Future<Map<String, dynamic>> _read() async {
-    if (_cache != null) return _cache!;
+  Future<Database> _getDb() async {
+    if (_db != null) return _db!;
+
+    final path = _dbPath;
+    final dir = File(path).parent;
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+
+    // 首次启动时从 JSON 迁移
+    final sqliteExists = await File(path).exists();
+    if (!sqliteExists) {
+      await _migrateFromJsonIfNeeded();
+    }
+
+    _db = await databaseFactoryFfi.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 1,
+        onCreate: _onCreate,
+      ),
+    );
+    return _db!;
+  }
+
+  Future<void> _onCreate(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        remark TEXT,
+        gateway_session_id TEXT,
+        source TEXT DEFAULT 'cli',
+        model TEXT,
+        provider TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        attachments TEXT,
+        tool_calls TEXT,
+        timestamp TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS display_sessions (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        remark TEXT,
+        current_backend_id TEXT NOT NULL DEFAULT '',
+        backend_id_history TEXT NOT NULL DEFAULT '[]',
+        preview TEXT,
+        model TEXT,
+        provider TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)');
+  }
+
+  Future<void> _close() async {
+    await _db?.close();
+    _db = null;
+  }
+
+  // ── 从 JSON 迁移 ──
+
+  Future<void> _migrateFromJsonIfNeeded() async {
+    final base = '${ConfigService.resolveHermesHome()}/desktop_db';
+    final suffix = connectionModeToDbSuffix(_mode);
+    final jsonPath = suffix.isEmpty ? '$base.json' : '${base}_$suffix.json';
+    final jsonFile = File(jsonPath);
+    if (!await jsonFile.exists()) return;
+
     try {
-      final file = File(_dbPath);
-      if (await file.exists()) {
-        final content = await file.readAsString();
-        _cache = jsonDecode(content) as Map<String, dynamic>? ?? {};
-        return _cache!;
+      final content = await jsonFile.readAsString();
+      final data = jsonDecode(content) as Map<String, dynamic>;
+
+      final dbPath = _dbPath;
+      final db = await databaseFactoryFfi.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: 1,
+          onCreate: _onCreate,
+        ),
+      );
+
+      try {
+        // 迁移 sessions + messages
+        final sessionsMap = data['sessions'] as Map<String, dynamic>? ?? {};
+        for (final entry in sessionsMap.entries) {
+          final s = entry.value as Map<String, dynamic>;
+          final id = s['id'] as String? ?? entry.key;
+          await db.insert('sessions', {
+            'id': id,
+            'title': s['title'] ?? '',
+            'remark': s['remark'],
+            'gateway_session_id': s['gateway_session_id'],
+            'source': s['source'] ?? 'cli',
+            'model': s['model'],
+            'provider': s['provider'],
+            'created_at': s['created_at'] ?? DateTime.now().toIso8601String(),
+            'updated_at': s['updated_at'] ?? DateTime.now().toIso8601String(),
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+          final msgs = s['messages'] as List? ?? [];
+          for (final msg in msgs) {
+            final m = msg as Map<String, dynamic>;
+            await db.insert('messages', {
+              'session_id': id,
+              'role': m['role'] ?? 'user',
+              'content': m['content'] ?? '',
+              'attachments': m['attachments'] != null ? jsonEncode(m['attachments']) : null,
+              'tool_calls': m['tool_calls'] != null ? jsonEncode(m['tool_calls']) : null,
+              'timestamp': m['timestamp'] ?? DateTime.now().toIso8601String(),
+            });
+          }
+        }
+
+        // 迁移 display_sessions
+        final dsMap = data['display_sessions'] as Map<String, dynamic>? ?? {};
+        for (final entry in dsMap.entries) {
+          final s = entry.value as Map<String, dynamic>;
+          await db.insert('display_sessions', {
+            'id': s['id'] ?? entry.key,
+            'title': s['title'] ?? '',
+            'remark': s['remark'],
+            'current_backend_id': s['current_backend_id'] ?? '',
+            'backend_id_history':
+                s['backend_id_history'] != null ? jsonEncode(s['backend_id_history']) : '[]',
+            'preview': s['preview'],
+            'model': s['model'],
+            'provider': s['provider'],
+            'created_at': s['created_at'] ?? DateTime.now().toIso8601String(),
+            'updated_at': s['updated_at'] ?? DateTime.now().toIso8601String(),
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      } finally {
+        await db.close();
       }
-    } catch (_) {}
-    _cache = {'version': 1, 'sessions': <String, dynamic>{}, 'display_sessions': <String, dynamic>{}};
-    return _cache!;
+
+      // 迁移成功后重命名 JSON 作为备份
+      await jsonFile.rename('$jsonPath.migrated');
+    } catch (_) {
+      // 迁移失败则从头开始
+    }
   }
 
-  Future<void> _write(Map<String, dynamic> data) async {
-    _cache = data;
-    try {
-      await File(_dbPath).writeAsString(jsonEncode(data));
-    } catch (_) {}
-  }
+  // ── Session 方法 ──
 
-  /// 获取所有会话（按 updatedAt 倒序）
   Future<List<Session>> getSessions() async {
-    final db = await _read();
-    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
+    final db = await _getDb();
+    final rows = await db.query('sessions', orderBy: 'updated_at DESC');
     final list = <Session>[];
-    for (final entry in sessionsMap.entries) {
-      final s = entry.value as Map<String, dynamic>? ?? {};
+    for (final row in rows) {
       list.add(Session(
-        id: s['id'] as String? ?? entry.key,
-        title: s['title'] as String? ?? '',
-        remark: s['remark'] as String?,
-        gatewaySessionId: s['gateway_session_id'] as String?,
-        source: s['source'] as String? ?? 'cli',
-        createdAt: _parseDate(s['created_at']),
-        updatedAt: _parseDate(s['updated_at']),
-        messageCount: (s['messages'] as List?)?.length ?? 0,
-        preview: _getPreview(s['messages'] as List?),
-        model: s['model'] as String?,
-        provider: s['provider'] as String?,
+        id: row['id'] as String,
+        title: row['title'] as String? ?? '',
+        remark: row['remark'] as String?,
+        gatewaySessionId: row['gateway_session_id'] as String?,
+        source: row['source'] as String? ?? 'cli',
+        createdAt: _parseDate(row['created_at']),
+        updatedAt: _parseDate(row['updated_at']),
+        messageCount: await _countMessages(row['id'] as String),
+        preview: await _getPreview(row['id'] as String),
+        model: row['model'] as String?,
+        provider: row['provider'] as String?,
       ));
     }
-    list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return list;
   }
 
-  /// 获取指定会话的消息列表
   Future<List<Map<String, dynamic>>> getMessages(String sessionId) async {
-    final db = await _read();
-    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
-    final session = sessionsMap[sessionId] as Map<String, dynamic>?;
-    if (session == null) return [];
-    final messages = session['messages'] as List? ?? [];
-    return messages.cast<Map<String, dynamic>>();
+    final db = await _getDb();
+    final rows = await db.query('messages',
+        where: 'session_id = ?', whereArgs: [sessionId], orderBy: 'id ASC');
+    return rows.map((row) {
+      final map = <String, dynamic>{
+        'role': row['role'],
+        'content': row['content'],
+        'timestamp': row['timestamp'],
+      };
+      if (row['attachments'] != null) {
+        try {
+          map['attachments'] = jsonDecode(row['attachments'] as String);
+        } catch (_) {}
+      }
+      if (row['tool_calls'] != null) {
+        try {
+          map['tool_calls'] = jsonDecode(row['tool_calls'] as String);
+        } catch (_) {}
+      }
+      return map;
+    }).toList();
   }
 
-  /// 获取单个会话
   Future<Session?> getSession(String sessionId) async {
-    final db = await _read();
-    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
-    final s = sessionsMap[sessionId] as Map<String, dynamic>?;
-    if (s == null) return null;
+    final db = await _getDb();
+    final rows = await db.query('sessions', where: 'id = ?', whereArgs: [sessionId]);
+    if (rows.isEmpty) return null;
+    final row = rows.first;
     return Session(
-      id: s['id'] as String? ?? sessionId,
-      title: s['title'] as String? ?? '',
-      remark: s['remark'] as String?,
-      gatewaySessionId: s['gateway_session_id'] as String?,
-      source: s['source'] as String? ?? 'cli',
-      createdAt: _parseDate(s['created_at']),
-      updatedAt: _parseDate(s['updated_at']),
-      messageCount: (s['messages'] as List?)?.length ?? 0,
-      preview: _getPreview(s['messages'] as List?),
-      model: s['model'] as String?,
-      provider: s['provider'] as String?,
+      id: row['id'] as String,
+      title: row['title'] as String? ?? '',
+      remark: row['remark'] as String?,
+      gatewaySessionId: row['gateway_session_id'] as String?,
+      source: row['source'] as String? ?? 'cli',
+      createdAt: _parseDate(row['created_at']),
+      updatedAt: _parseDate(row['updated_at']),
+      messageCount: await _countMessages(row['id'] as String),
+      preview: await _getPreview(row['id'] as String),
+      model: row['model'] as String?,
+      provider: row['provider'] as String?,
     );
   }
 
-  /// 创建新会话（含标题和第一条消息）
   Future<void> createSession({
     required String id,
     required String title,
@@ -124,275 +270,257 @@ class LocalDatabase {
     String? provider,
     List<Map<String, String>>? userAttachments,
   }) async {
-    final db = await _read();
-    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
+    final db = await _getDb();
     final now = DateTime.now().toIso8601String();
-    final messages = <Map<String, dynamic>>[];
+    await db.insert('sessions', {
+      'id': id,
+      'title': title,
+      'source': 'cli',
+      'model': model,
+      'provider': provider,
+      'created_at': now,
+      'updated_at': now,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
     if (userMessage.isNotEmpty ||
         (userAttachments != null && userAttachments.isNotEmpty)) {
-      final msg = <String, dynamic>{
+      await db.insert('messages', {
+        'session_id': id,
         'role': 'user',
         'content': userMessage,
+        'attachments': userAttachments != null ? jsonEncode(userAttachments) : null,
         'timestamp': now,
-      };
-      if (userAttachments != null && userAttachments.isNotEmpty) {
-        msg['attachments'] = userAttachments.map((a) => <String, String>{
-          'name': a['name'] ?? '',
-          'mime': a['mime'] ?? 'application/octet-stream',
-        }).toList();
-      }
-      messages.add(msg);
+      });
     }
     if (assistantMessage.isNotEmpty) {
-      messages.add({
+      await db.insert('messages', {
+        'session_id': id,
         'role': 'assistant',
         'content': assistantMessage,
         'timestamp': now,
       });
     }
-    sessionsMap[id] = {
-      'id': id,
-      'title': title,
-      'source': 'cli',
-      'created_at': now,
-      'updated_at': now,
-      'messages': messages,
-      if (model != null) 'model': model,
-      if (provider != null) 'provider': provider,
-    };
-    await _write(db);
   }
 
-  /// 添加消息到指定会话
   Future<void> addMessage(String sessionId, String role, String content,
-      {List<Map<String, String>>? attachments}) async {
-    final db = await _read();
-    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
-    final session = sessionsMap[sessionId] as Map<String, dynamic>?;
-    if (session == null) return;
-    final messages = session['messages'] as List? ?? [];
-    final msg = <String, dynamic>{
+      {List<Map<String, String>>? attachments,
+      void Function(String preview)? onPreviewUpdated}) async {
+    if (sessionId.isEmpty) return;
+    final db = await _getDb();
+    final now = DateTime.now().toIso8601String();
+    await db.insert('messages', {
+      'session_id': sessionId,
       'role': role,
       'content': content,
-      'timestamp': DateTime.now().toIso8601String(),
-    };
-    if (attachments != null && attachments.isNotEmpty) {
-      msg['attachments'] = attachments.map((a) => <String, String>{
-        'name': a['name'] ?? '',
-        'mime': a['mime'] ?? 'application/octet-stream',
-      }).toList();
-    }
-    messages.add(msg);
-    session['messages'] = messages;
-    session['updated_at'] = DateTime.now().toIso8601String();
-    // 更新标题预览：取第一条用户消息
-    if (session['title'] == null || (session['title'] as String).isEmpty) {
-      for (final m in messages) {
-        if (m['role'] == 'user') {
-          final c = (m['content'] as String?) ?? '';
-          session['title'] = c.length > 25 ? '${c.substring(0, 25)}...' : c;
-          break;
-        }
+      'attachments': attachments != null ? jsonEncode(attachments) : null,
+      'timestamp': now,
+    });
+    await db.update('sessions',
+        {'updated_at': now},
+        where: 'id = ?', whereArgs: [sessionId]);
+    // 同步更新 display_sessions 的预览
+    if (role != 'tool') {
+      final trimmed = content.trim();
+      if (trimmed.isNotEmpty) {
+        final preview = trimmed.length > 100 ? '${trimmed.substring(0, 100)}...' : trimmed;
+        await db.update(
+          'display_sessions',
+          {'preview': preview, 'updated_at': now},
+          where: 'current_backend_id = ?',
+          whereArgs: [sessionId],
+        );
+        onPreviewUpdated?.call(preview);
       }
     }
-    await _write(db);
   }
 
-  /// 设置会话备注
   Future<void> updateSessionRemark(String sessionId, String? remark) async {
-    final db = await _read();
-    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
-    final session = sessionsMap[sessionId] as Map<String, dynamic>?;
-    if (session == null) return;
-    if (remark != null && remark.isNotEmpty) {
-      session['remark'] = remark;
-    } else {
-      session.remove('remark');
-    }
-    await _write(db);
+    final db = await _getDb();
+    await db.update('sessions',
+        {'remark': (remark != null && remark.isNotEmpty) ? remark : null},
+        where: 'id = ?', whereArgs: [sessionId]);
   }
 
-  /// 更新会话的 Gateway session ID（续聊用）
-  /// 传 null 或空字符串会从 DB 中移除该 key，而非存空值
-  Future<void> updateGatewaySessionId(String localSessionId, String? gatewaySessionId) async {
-    final db = await _read();
-    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
-    final session = sessionsMap[localSessionId] as Map<String, dynamic>?;
-    if (session == null) return;
-    if (gatewaySessionId != null && gatewaySessionId.isNotEmpty) {
-      session['gateway_session_id'] = gatewaySessionId;
-    } else {
-      session.remove('gateway_session_id');
-    }
-    await _write(db);
+  Future<void> updateGatewaySessionId(
+      String localSessionId, String? gatewaySessionId) async {
+    final db = await _getDb();
+    await db.update('sessions',
+        {'gateway_session_id': gatewaySessionId},
+        where: 'id = ?', whereArgs: [localSessionId]);
   }
 
-  /// 更新会话的模型和 provider
-  @Deprecated('Per-session model switching has been removed. Use global config only.')
-  Future<void> updateSessionModel(String sessionId, String? model, {String? provider}) async {
-    final db = await _read();
-    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
-    final session = sessionsMap[sessionId] as Map<String, dynamic>?;
-    if (session == null) return;
-    if (model != null && model.isNotEmpty) {
-      session['model'] = model;
-    } else {
-      session.remove('model');
-    }
-    if (provider != null && provider.isNotEmpty) {
-      session['provider'] = provider;
-    } else {
-      session.remove('provider');
-    }
-    await _write(db);
+  @Deprecated('Per-session model switching has been removed.')
+  Future<void> updateSessionModel(String sessionId, String? model,
+      {String? provider}) async {
+    final db = await _getDb();
+    await db.update('sessions',
+        {'model': model, 'provider': provider},
+        where: 'id = ?', whereArgs: [sessionId]);
   }
 
-  /// 删除会话
   Future<void> deleteSession(String sessionId) async {
-    final db = await _read();
-    final sessionsMap = db['sessions'] as Map<String, dynamic>? ?? {};
-    sessionsMap.remove(sessionId);
-    await _write(db);
+    final db = await _getDb();
+    await db.delete('messages', where: 'session_id = ?', whereArgs: [sessionId]);
+    await db.delete('sessions', where: 'id = ?', whereArgs: [sessionId]);
   }
 
-  /// 清除缓存（强制下次重新读取磁盘）
   void invalidate() {
-    _cache = null;
+    // SQLite 连接持续存在，无需清除缓存
   }
 
-  /// 迁移旧版 sessions 到 DisplaySession（无数据时自动执行一次）
-  Future<void> migrateOldSessionsIfNeeded() async {
-    final db = await _read();
-    final dsMap = db['display_sessions'] as Map<String, dynamic>? ?? {};
-    if (dsMap.isNotEmpty) return; // 已有展示会话，无需迁移
-    final oldMap = db['sessions'] as Map<String, dynamic>? ?? {};
-    if (oldMap.isEmpty) return; // 没有旧会话
+  // ── DisplaySession 方法 ──
 
-    final migrated = <String, dynamic>{};
-    for (final entry in oldMap.entries) {
-      final s = entry.value as Map<String, dynamic>? ?? {};
-      final id = s['id'] as String? ?? entry.key;
-      final messages = s['messages'] as List? ?? [];
-      final preview = _getPreview(messages);
-      migrated[id] = {
-        'id': id,
-        'title': s['title'] ?? '未命名会话',
-        if (s['remark'] != null) 'remark': s['remark'],
-        'current_backend_id': id,
-        'backend_id_history': [id],
-        if (preview.isNotEmpty) 'preview': preview,
-        if (s['model'] != null) 'model': s['model'],
-        if (s['provider'] != null) 'provider': s['provider'],
-        'created_at': s['created_at'] ?? DateTime.now().toIso8601String(),
-        'updated_at': s['updated_at'] ?? DateTime.now().toIso8601String(),
-      };
-    }
-    db['display_sessions'] = migrated;
-    await _write(db);
-  }
-
-  // ═══════════════════════════════════════════
-  //  DisplaySession — 展示层会话（用户看到的条目）
-  //  每个 DisplaySession 对应一个用户聊天条目，
-  //  绑定一个或多个后端 backend session_id。
-  //  切换模型 → 后端生成新 session_id → 更新 currentBackendId
-  //  → 展示层条目不变，title/remark 不丢失。
-  // ═══════════════════════════════════════════
-
-  /// 获取所有展示会话（按 updatedAt 倒序）
   Future<List<DisplaySession>> getDisplaySessions() async {
-    final db = await _read();
-    final map = db['display_sessions'] as Map<String, dynamic>? ?? {};
-    final list = map.values
-        .map((v) => DisplaySession.fromJson(v as Map<String, dynamic>))
-        .toList();
-    list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    return list;
+    final db = await _getDb();
+    final rows = await db.query('display_sessions', orderBy: 'updated_at DESC');
+    return rows.map((row) => DisplaySession(
+      id: row['id'] as String,
+      title: row['title'] as String? ?? '',
+      remark: row['remark'] as String?,
+      currentBackendId: row['current_backend_id'] as String? ?? '',
+      backendIdHistory: _parseStrList(row['backend_id_history'] as String?),
+      preview: row['preview'] as String?,
+      model: row['model'] as String?,
+      provider: row['provider'] as String?,
+      createdAt: _parseDate(row['created_at']),
+      updatedAt: _parseDate(row['updated_at']),
+    )).toList();
   }
 
-  /// 获取单个展示会话
   Future<DisplaySession?> getDisplaySession(String id) async {
-    final db = await _read();
-    final map = db['display_sessions'] as Map<String, dynamic>? ?? {};
-    final data = map[id] as Map<String, dynamic>?;
-    if (data == null) return null;
-    return DisplaySession.fromJson(data);
+    final db = await _getDb();
+    final rows = await db.query('display_sessions', where: 'id = ?', whereArgs: [id]);
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return DisplaySession(
+      id: row['id'] as String,
+      title: row['title'] as String? ?? '',
+      remark: row['remark'] as String?,
+      currentBackendId: row['current_backend_id'] as String? ?? '',
+      backendIdHistory: _parseStrList(row['backend_id_history'] as String?),
+      preview: row['preview'] as String?,
+      model: row['model'] as String?,
+      provider: row['provider'] as String?,
+      createdAt: _parseDate(row['created_at']),
+      updatedAt: _parseDate(row['updated_at']),
+    );
   }
 
-  /// 创建展示会话
   Future<void> createDisplaySession(DisplaySession ds) async {
-    final db = await _read();
-    final map = db['display_sessions'] as Map<String, dynamic>? ?? {};
-    map[ds.id] = ds.toJson();
-    db['display_sessions'] = map;
-    await _write(db);
+    final db = await _getDb();
+    await db.insert('display_sessions', {
+      'id': ds.id,
+      'title': ds.title,
+      'remark': ds.remark,
+      'current_backend_id': ds.currentBackendId,
+      'backend_id_history': jsonEncode(ds.backendIdHistory),
+      'preview': ds.preview,
+      'model': ds.model,
+      'provider': ds.provider,
+      'created_at': ds.createdAt.toIso8601String(),
+      'updated_at': ds.updatedAt.toIso8601String(),
+    });
   }
 
-  /// 更新展示会话字段
   Future<void> updateDisplaySession(DisplaySession ds) async {
-    final db = await _read();
-    final map = db['display_sessions'] as Map<String, dynamic>? ?? {};
-    map[ds.id] = ds.toJson();
-    db['display_sessions'] = map;
-    await _write(db);
+    final db = await _getDb();
+    await db.update('display_sessions', {
+      'title': ds.title,
+      'remark': ds.remark,
+      'current_backend_id': ds.currentBackendId,
+      'backend_id_history': jsonEncode(ds.backendIdHistory),
+      'preview': ds.preview,
+      'model': ds.model,
+      'provider': ds.provider,
+      'updated_at': ds.updatedAt.toIso8601String(),
+    }, where: 'id = ?', whereArgs: [ds.id]);
   }
 
-  /// 切换后端 session_id：更新 currentBackendId + 追加到 history
   Future<void> switchBackendId(String displayId, String newBackendId) async {
-    final db = await _read();
-    final map = db['display_sessions'] as Map<String, dynamic>? ?? {};
-    final data = map[displayId] as Map<String, dynamic>?;
-    if (data == null) return;
-    final ds = DisplaySession.fromJson(data);
+    final ds = await getDisplaySession(displayId);
+    if (ds == null) return;
+    // 切换时从新后端读取最新一条消息更新 preview
+    final rows = await (await _getDb()).rawQuery(
+      "SELECT content FROM messages WHERE session_id = ? AND role != 'tool' ORDER BY id DESC LIMIT 1",
+      [newBackendId],
+    );
+    String? preview;
+    if (rows.isNotEmpty) {
+      final raw = (rows.first['content'] as String? ?? '').trim();
+      if (raw.isNotEmpty) {
+        preview = raw.length > 100 ? '${raw.substring(0, 100)}...' : raw;
+      }
+    }
     final updated = ds.copyWith(
       currentBackendId: newBackendId,
       backendIdHistory: [...ds.backendIdHistory, ds.currentBackendId],
+      preview: preview ?? ds.preview,
       updatedAt: DateTime.now(),
     );
-    map[displayId] = updated.toJson();
-    db['display_sessions'] = map;
-    await _write(db);
+    await updateDisplaySession(updated);
   }
 
-  /// 删除展示会话
   Future<void> deleteDisplaySession(String id) async {
-    final db = await _read();
-    final map = db['display_sessions'] as Map<String, dynamic>? ?? {};
-    map.remove(id);
-    db['display_sessions'] = map;
-    await _write(db);
+    final db = await _getDb();
+    await db.delete('display_sessions', where: 'id = ?', whereArgs: [id]);
   }
 
-  /// 获取展示会话的所有消息（按后端 session 查询）
   Future<List<Map<String, dynamic>>> getDisplayMessages(String displayId) async {
-    final db = await _read();
-    final map = db['display_sessions'] as Map<String, dynamic>? ?? {};
-    final data = map[displayId] as Map<String, dynamic>?;
-    if (data == null) return [];
-    final ds = DisplaySession.fromJson(data);
-    final backendId = ds.currentBackendId;
-    if (backendId.isEmpty) return [];
-    return getMessages(backendId);
+    final ds = await getDisplaySession(displayId);
+    if (ds == null || ds.currentBackendId.isEmpty) return [];
+    return getMessages(ds.currentBackendId);
   }
 
-  /// 向展示会话的当前后端添加消息
   Future<void> addDisplayMessage(String displayId, String role, String content,
       {List<Map<String, String>>? attachments}) async {
-    final db = await _read();
-    final map = db['display_sessions'] as Map<String, dynamic>? ?? {};
-    final data = map[displayId] as Map<String, dynamic>?;
-    if (data == null) return;
-    final ds = DisplaySession.fromJson(data);
-    if (ds.currentBackendId.isEmpty) return;
-    await addMessage(ds.currentBackendId, role, content, attachments: attachments);
-    // 更新展示会话的 updatedAt
+    final ds = await getDisplaySession(displayId);
+    if (ds == null || ds.currentBackendId.isEmpty) return;
+    await addMessage(ds.currentBackendId, role, content,
+        attachments: attachments);
+    // 更新展示会话的时间戳
     final updated = ds.copyWith(updatedAt: DateTime.now());
-    map[displayId] = updated.toJson();
-    db['display_sessions'] = map;
-    await _write(db);
+    await updateDisplaySession(updated);
   }
 
-  // ── helpers ──
+  // ── 兼容旧接口 ──
+
+  Future<void> migrateOldSessionsIfNeeded() async {
+    // JSON→SQLite 迁移在 _getDb() 中自动处理
+  }
+
+  // ── Helpers ──
+
+  Future<void> _syncPreview(String sessionId) async {
+    final db = await _getDb();
+    // 取最后一条非 tool 消息作为预览
+    final rows = await db.rawQuery(
+      "SELECT content FROM messages WHERE session_id = ? AND role != 'tool' ORDER BY id DESC LIMIT 1",
+      [sessionId],
+    );
+    String? preview;
+    if (rows.isNotEmpty) {
+      final raw = (rows.first['content'] as String? ?? '').trim();
+      if (raw.isNotEmpty) {
+        preview = raw.length > 100 ? '${raw.substring(0, 100)}...' : raw;
+      }
+    }
+    // 更新所有引用该后端 session 的 display_sessions
+    await db.update(
+      'display_sessions',
+      {'preview': preview, 'updated_at': DateTime.now().toIso8601String()},
+      where: 'current_backend_id = ?',
+      whereArgs: [sessionId],
+    );
+  }
+
+  List<String> _parseStrList(String? json) {
+    if (json == null || json.isEmpty) return [];
+    try {
+      final list = jsonDecode(json) as List;
+      return list.map((e) => e.toString()).toList();
+    } catch (_) {
+      return [];
+    }
+  }
 
   DateTime _parseDate(dynamic d) {
     if (d == null) return DateTime.now();
@@ -400,45 +528,23 @@ class LocalDatabase {
     return DateTime.now();
   }
 
-  String _getPreview(List? messages) {
-    if (messages == null || messages.isEmpty) return '';
-    // 倒序找第一个适合做预览的消息
-    for (int i = messages.length - 1; i >= 0; i--) {
-      final m = messages[i] as Map<String, dynamic>? ?? {};
-      final role = m['role'] as String? ?? '';
-      // 跳过 tool 消息
-      if (role == 'tool') continue;
-      final raw = m['content'];
-      String text;
-      if (raw is String) {
-        text = raw;
-      } else if (raw is Map) {
-        text = raw.toString();
-      } else if (raw is List) {
-        // 多段内容（OpenAI 格式），拼接各段的文本
-        text = raw.map((part) {
-          if (part is Map) {
-            return (part['text'] as String?) ?? part.toString();
-          }
-          return part.toString();
-        }).join(' ');
-      } else {
-        text = raw?.toString() ?? '';
-      }
-      text = text.trim();
-      if (text.isNotEmpty) return text.length > 100 ? '${text.substring(0, 100)}...' : text;
+  Future<int> _countMessages(String sessionId) async {
+    final db = await _getDb();
+    final result = await db.rawQuery(
+        'SELECT COUNT(*) as cnt FROM messages WHERE session_id = ?', [sessionId]);
+    return (result.first['cnt'] as int?) ?? 0;
+  }
 
-      // content 为空但有 tool_calls（如函数调用助手消息），用 tool call 名作预览
-      final toolCalls = m['tool_calls'] as List?;
-      if (toolCalls != null && toolCalls.isNotEmpty) {
-        final firstCall = toolCalls.first as Map<String, dynamic>? ?? {};
-        final funcName = (firstCall['function'] as Map?)?['name'] as String? ?? '';
-        if (funcName.isNotEmpty) {
-          return '[调用工具: $funcName]';
-        }
-        return '[工具调用]';
-      }
-    }
-    return '';
+  Future<String?> _getPreview(String sessionId) async {
+    final db = await _getDb();
+    final rows = await db.rawQuery(
+      "SELECT content FROM messages WHERE session_id = ? AND role != 'tool' ORDER BY id DESC LIMIT 1",
+      [sessionId],
+    );
+    if (rows.isEmpty) return null;
+    final raw = rows.first['content'] as String? ?? '';
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    return text.length > 100 ? '${text.substring(0, 100)}...' : text;
   }
 }

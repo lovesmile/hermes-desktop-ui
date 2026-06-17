@@ -46,7 +46,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _loadData(showLoading: true);
+    // 连接未建立时跳过首次加载，等 _onConnectionChanged 在 connected 时加载
+    // 避免 connecting 阶段读到本地 DB 或读不到远程数据
+    if (_cm.state.status == ConnStatus.connected) {
+      _loadData(showLoading: true);
+    }
     widget.tabNotifier?.addListener(_onTabChanged);
     _cm.stateNotifier.addListener(_onConnectionChanged);
     _onRefresh = () => _loadData();
@@ -63,6 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _onConnectionChanged() {
     if (mounted) setState(() {});
+    // 变成 connected 时才加载，其他状态（connecting/error）不需要重新加载数据
     if (_cm.state.status == ConnStatus.connected) {
       _loadData();
     }
@@ -238,7 +243,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       label: '总会话数',
                                       color: AppTheme.primary,
                                       fontScale: fontScale,
-                                      onTap: () => widget.onNavigate?.call(1),
+                                      onTap: () => widget.onNavigate?.call(7),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -250,7 +255,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       label: '已装技能',
                                       color: AppTheme.info,
                                       fontScale: fontScale,
-                                      onTap: () => widget.onNavigate?.call(3),
+                                      onTap: () => widget.onNavigate?.call(2),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -262,7 +267,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       label: '日志大小',
                                       color: AppTheme.secondary,
                                       fontScale: fontScale,
-                                      onTap: () => widget.onNavigate?.call(6),
+                                      onTap: () => widget.onNavigate?.call(5),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -274,7 +279,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       label: '定时任务',
                                       color: AppTheme.secondary,
                                       fontScale: fontScale,
-                                      onTap: () => widget.onNavigate?.call(2),
+                                      onTap: () => widget.onNavigate?.call(1),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -286,7 +291,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       label: '文件浏览',
                                       color: AppTheme.info,
                                       fontScale: fontScale,
-                                      onTap: () => widget.onNavigate?.call(4),
+                                      onTap: () => widget.onNavigate?.call(3),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -298,7 +303,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       label: '设置',
                                       color: AppTheme.warning,
                                       fontScale: fontScale,
-                                      onTap: () => widget.onNavigate?.call(7),
+                                      onTap: () => widget.onNavigate?.call(6),
                                     ),
                                   ),
                                 ],

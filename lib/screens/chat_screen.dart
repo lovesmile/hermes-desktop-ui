@@ -40,7 +40,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _loading = true;
   bool _loadingMore = false;
   bool _loadingMoreMessages = false;
-  bool _sending = false;
+  // 每个会话独立的发送状态
+  final Map<String, bool> _sendingPerSession = {};
+  bool get _sending => _sendingPerSession[_activeDisplaySession?.id] ?? false;
   bool _loadingMessages = false;
   String _streamingContent = '';
   Timer? _streamThrottleTimer;
@@ -55,19 +57,21 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _isThinking => _sending && _streamingContent.isEmpty;
 
   // 取消当前活跃的流式回复
-  void _cancelCurrentChat() {
+  // targetSid: 指定要取消的会话ID，null表示只取消当前活跃会话
+  void _cancelCurrentChat([String? targetSid]) {
     _streamThrottleTimer?.cancel();
-    // 取消所有活跃订阅
-    for (final entry in _streamSubscriptions.entries) {
-      entry.value.cancel();
+    final sid = targetSid ?? _activeDisplaySession?.id;
+    if (sid != null && _streamSubscriptions.containsKey(sid)) {
+      _streamSubscriptions[sid]!.cancel();
+      _streamSubscriptions.remove(sid);
+      _streamingBuffers.remove(sid);
+      _streamingSessions.remove(sid);
     }
-    _streamSubscriptions.clear();
-    _streamingBuffers.clear();
-    _streamingSessions.clear();
-    if (mounted) {
+    // 只有取消当前活跃会话的流才重置发送状态
+    if (sid == _activeDisplaySession?.id && mounted) {
       setState(() {
         _streamingContent = '';
-        _sending = false;
+        _sendingPerSession.remove(sid);
         _interrupted = true;
         _segmentsCommitted = 0;
       });
@@ -85,6 +89,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // 每个会话独立的输入框草稿
   final Map<String, String> _sessionDrafts = {};
+
 
   // 消息分页
   static const int _messagePageSize = 30;
@@ -256,6 +261,16 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _loading = true);
     try {
       final sessions = await _localDb.getDisplaySessions();
+      // 补充缺失的预览
+      for (int i = 0; i < sessions.length; i++) {
+        if (sessions[i].preview?.isNotEmpty != true) {
+          final msgs = await _localDb.getMessages(sessions[i].currentBackendId);
+          final preview = _computePreview(msgs);
+          if (preview.isNotEmpty) {
+            sessions[i] = sessions[i].copyWith(preview: preview);
+          }
+        }
+      }
       setState(() {
         _displaySessions = sessions;
         _sessionPage = 0;
@@ -282,6 +297,24 @@ class _ChatScreenState extends State<ChatScreen> {
       _sessionHasMore = _displaySessions.length > _displayedDisplaySessions.length;
       _loadingMore = false;
     });
+  }
+
+  /// 从消息列表中计算预览文本
+  String _computePreview(List<Map<String, dynamic>> messages) {
+    for (int i = messages.length - 1; i >= 0; i--) {
+      final m = messages[i];
+      if (m['role'] == 'tool') continue;
+      final raw = m['content'];
+      String text;
+      if (raw is String) {
+        text = raw;
+      } else {
+        text = raw?.toString() ?? '';
+      }
+      text = text.trim();
+      if (text.isNotEmpty) return text.length > 100 ? '${text.substring(0, 100)}...' : text;
+    }
+    return '';
   }
 
   Future<void> _loadSkills() async {
@@ -369,6 +402,18 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       // 写入缓存（用 displayId）
       _messageCache[_activeDisplaySession!.id] = messages;
+      // 如果预览为空，用最后一条消息更新
+      if (_activeDisplaySession!.preview?.isEmpty != false && messages.isNotEmpty) {
+        final last = messages.last;
+        final previewText = last.text.length > 100 ? '${last.text.substring(0, 100)}...' : last.text;
+        final updated = _activeDisplaySession!.copyWith(preview: previewText);
+        await _localDb.updateDisplaySession(updated);
+        final idx = _displaySessions.indexWhere((s) => s.id == _activeDisplaySession!.id);
+        if (idx >= 0) _displaySessions[idx] = updated;
+        final didx = _displayedDisplaySessions.indexWhere((s) => s.id == _activeDisplaySession!.id);
+        if (didx >= 0) _displayedDisplaySessions[didx] = updated;
+        if (mounted) setState(() {});
+      }
       _applyMessagePagination(messages);
     } catch (_) {
       _hideLoading();
@@ -443,14 +488,19 @@ class _ChatScreenState extends State<ChatScreen> {
       _activeDisplaySession = ds;
       _currentSessionModel = ds.model;
       _currentSessionProvider = ds.provider;
-      _messages = [];
-      // ★ 如果此会话正在流式回复中，显示其 buffer
+      // ★ 如果此会话正在流式回复中，恢复其 buffer 和消息列表
       if (_streamingBuffers.containsKey(ds.id)) {
         _streamingContent = _streamingBuffers[ds.id]!;
-        _sending = true;
+        _sendingPerSession[ds.id] = true;
+        // buffer 有内容但消息列表为空（首次切换进来），补一条消息
+        if (_messages.isEmpty && _streamingContent.isNotEmpty) {
+          _messages.add(_Message(
+              text: _streamingContent, isUser: false, timestamp: DateTime.now()));
+        }
       } else {
+        _messages = [];
         _streamingContent = '';
-        _sending = false;
+        _sendingPerSession.remove(ds.id);
       }
     });
     // ★ 恢复目标会话的输入框草稿
@@ -486,6 +536,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _draftMessages[_activeDisplaySession!.id] = currentText;
       }
     }
+    // ★ 取消任何活跃的流式回复
+    _cancelCurrentChat();
     setState(() {
       _activeDisplaySession = null;
       _messages = [];
@@ -585,10 +637,19 @@ class _ChatScreenState extends State<ChatScreen> {
     // ★ 如果正在回复中，先中断当前回复
     bool wasReplying = _sending;
     if (_sending) {
-      _cancelCurrentChat();
+      _cancelCurrentChat(_activeDisplaySession?.id);
     }
     // 清除之前的中断标记（新消息开始）
     _interrupted = false;
+
+    // ★ 如果当前没有模型设置，从配置读取默认模型
+    if (_currentSessionModel == null) {
+      try {
+        final modelCfg = await _configService.readModelConfig();
+        _currentSessionModel = modelCfg['model'];
+        _currentSessionProvider = modelCfg['provider'];
+      } catch (_) {}
+    }
 
     // ★ 用 displayId 作为本地会话标识
     final String? displayId = _activeDisplaySession?.id;
@@ -597,10 +658,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final gatewayIdForApi = _activeDisplaySession?.currentBackendId;
     // ★ 记下 displayId 供 onDone 使用
     final String? displayIdAtSend = displayId;
+    final String localDisplayId = '${DateTime.now().microsecondsSinceEpoch}';
 
     if (isNewSession) {
       // ★ 无激活会话：生成本地 displayId + 暂存用户消息
-      final localDisplayId = '${DateTime.now().microsecondsSinceEpoch}';
       final title = '${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().day.toString().padLeft(2, '0')} ${text.length > 25 ? '${text.substring(0, 25)}...' : text}';
       // 用一个暂存 backendId 存放用户消息（onDone 后替换为真实后端 session_id）
       final tempBackendId = 'pending_$localDisplayId';
@@ -612,12 +673,14 @@ class _ChatScreenState extends State<ChatScreen> {
             : null,
       );
       // 创建 DisplaySession
+      final newDsPreview = text.trim().length > 100 ? '${text.trim().substring(0, 100)}...' : text.trim();
       final newDs = DisplaySession(
         id: localDisplayId,
         title: title,
         currentBackendId: tempBackendId,
         model: _currentSessionModel,
         provider: _currentSessionProvider,
+        preview: newDsPreview,
       );
       await _localDb.createDisplaySession(newDs);
       _displaySessions.insert(0, newDs);
@@ -628,7 +691,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? _attachedFiles.map((m) => Map<String, String>.from(m)).toList()
                 : null),
       ];
-      setState(() => _activeDisplaySession = newDs);
+      setState(() {
+        _activeDisplaySession = newDs;
+        _messages = _messageCache[localDisplayId] ?? [];
+      });
     } else if (displayId != null && _activeDisplaySession != null) {
       // 已有会话：用户消息存入当前后端
       final currentBackendId = _activeDisplaySession!.currentBackendId;
@@ -639,18 +705,23 @@ class _ChatScreenState extends State<ChatScreen> {
               : null,
         );
       }
-      // 更新展示会话的 updatedAt 和预览
-      final userPreview = text.length > 100 ? '${text.substring(0, 100)}...' : text;
-      final updatedDs = _activeDisplaySession!.copyWith(
-        preview: userPreview,
-        updatedAt: DateTime.now(),
-      );
-      await _localDb.updateDisplaySession(updatedDs);
+      final userPreview = text.trim().length > 100 ? '${text.trim().substring(0, 100)}...' : text.trim();
+      // addMessage 已经更新了 DB preview，通过 setState 同步更新内存状态
       setState(() {
         final idx = _displaySessions.indexWhere((s) => s.id == _activeDisplaySession!.id);
-        if (idx >= 0) _displaySessions[idx] = updatedDs;
+        if (idx >= 0) {
+          _displaySessions[idx] = _displaySessions[idx].copyWith(
+            preview: userPreview,
+            updatedAt: DateTime.now(),
+          );
+        }
         final didx = _displayedDisplaySessions.indexWhere((s) => s.id == _activeDisplaySession!.id);
-        if (didx >= 0) _displayedDisplaySessions[didx] = updatedDs;
+        if (didx >= 0) {
+          _displayedDisplaySessions[didx] = _displayedDisplaySessions[didx].copyWith(
+            preview: userPreview,
+            updatedAt: DateTime.now(),
+          );
+        }
       });
     }
 
@@ -670,7 +741,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     setState(() {
       if (displayIdAtSend != null) _messages.add(userMsg);
-      _sending = true;
+      _sendingPerSession[displayIdAtSend ?? localDisplayId] = true;
     });
     _segmentsCommitted = 0;
     _scrollToBottom();
@@ -699,17 +770,26 @@ class _ChatScreenState extends State<ChatScreen> {
       final pendingAttachments = _attachedFiles.isNotEmpty
           ? _attachedFiles.map((m) => Map<String, String>.from(m)).toList()
           : null;
-      final stream = _gateway.chatStream(apiText, sessionId: gatewayIdForApi,
-          attachments: filesForApi);
 
-      // ★ 如果此会话已有活跃流，先取消旧的（防止重复）
-      final oldSid = displayIdAtSend ?? '__pending_new__';
-      if (_streamSubscriptions.containsKey(oldSid)) {
-        await _streamSubscriptions[oldSid]!.cancel();
-        _streamSubscriptions.remove(oldSid);
-        _streamingBuffers.remove(oldSid);
-        _streamingSessions.remove(oldSid);
+      // ★ 加载当前会话的历史消息，让 AI 记住上下文
+      List<Map<String, String>>? historyMsgs;
+      if (gatewayIdForApi != null && gatewayIdForApi.isNotEmpty) {
+        final rawHistory = await _localDb.getMessages(gatewayIdForApi);
+        if (rawHistory.isNotEmpty) {
+          historyMsgs = rawHistory
+              .where((m) => m['role'] != 'tool')
+              .map((m) => {
+                    'role': m['role'] as String? ?? 'user',
+                    'content': (m['content'] as String?) ?? '',
+                  })
+              .toList();
+        }
       }
+
+      final stream = _gateway.chatStream(apiText, sessionId: gatewayIdForApi,
+          attachments: filesForApi, history: historyMsgs,
+          model: _currentSessionModel);
+
 
       // ★ 用 listen 替代 await for，实现并行流
       final sub = stream.listen(
@@ -726,11 +806,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 // 确保节流触发时还是同一个会话
                 if (_activeDisplaySession?.id != sid) return;
                 final full = _streamingBuffers[sid] ?? '';
+                // 同步更新 messageCache（切换会话后恢复用）
+                final cachedMsgs = _messageCache[sid];
                 setState(() {
                   // ★ 超过 2000 字自动分段，每段作为独立消息
                   while (full.length - _segmentsCommitted >= _segmentMaxLen) {
                     final seg = full.substring(_segmentsCommitted, _segmentsCommitted + _segmentMaxLen);
-                    _messages.add(_Message(text: seg, isUser: false, timestamp: DateTime.now()));
+                    final msg = _Message(text: seg, isUser: false, timestamp: DateTime.now());
+                    _messages.add(msg);
+                    cachedMsgs?.add(msg);
                     _segmentsCommitted += _segmentMaxLen;
                   }
                   _streamingContent = full.substring(_segmentsCommitted);
@@ -753,16 +837,16 @@ class _ChatScreenState extends State<ChatScreen> {
             // ── 全新会话 ──
             // isNewSession 分支已创建 DisplaySession + tempBackendId
             // 这里把 tempBackendId 替换为真实后端 session_id
-            _streamSubscriptions.remove('__pending__');
-            _streamingBuffers.remove('__pending__');
-            _streamingSessions.remove('__pending__');
-
             // 读取旧 displayId（刚创建的那个）
             final newDsList = await _localDb.getDisplaySessions();
             final latestDs = newDsList.isNotEmpty ? newDsList.first : null;
             final tempBackendId = latestDs?.currentBackendId ?? '';
 
             if (latestDs != null && newSessionId.isNotEmpty) {
+              // 只有在正确获取到 displaySession 时才清理 __pending__
+              _streamSubscriptions.remove('__pending__');
+              _streamingBuffers.remove('__pending__');
+              _streamingSessions.remove('__pending__');
               // 从 tempBackendId 迁移消息到真实后端 session_id
               final rawMessages = await _localDb.getMessages(tempBackendId);
               await _localDb.createSession(
@@ -785,7 +869,7 @@ class _ChatScreenState extends State<ChatScreen> {
               await _localDb.deleteSession(tempBackendId);
               // 更新 DisplaySession
               await _localDb.switchBackendId(latestDs.id, newSessionId);
-              final preview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
+              final preview = response.trim().length > 100 ? '${response.trim().substring(0, 100)}...' : response.trim();
               final updatedDs = latestDs.copyWith(
                 currentBackendId: newSessionId,
                 backendIdHistory: latestDs.backendIdHistory,
@@ -807,7 +891,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   if (didx >= 0) _displayedDisplaySessions[didx] = updatedDs;
                   _messages = List.from(_messageCache[latestDs.id]!);
                   _streamingContent = '';
-                  _sending = false;
+                  _sendingPerSession.remove(displayIdAtSend ?? localDisplayId);
                 });
               }
             }
@@ -816,6 +900,9 @@ class _ChatScreenState extends State<ChatScreen> {
             _streamSubscriptions.remove(displayIdAtSend);
             _streamingBuffers.remove(displayIdAtSend);
             _streamingSessions.remove(displayIdAtSend);
+
+            // 如果目标会话不是当前会话，暂存消息等切回来再显示
+            final isCurrentSession = _activeDisplaySession?.id == displayIdAtSend;
 
             // 获取当前 DisplaySession
             final ds = await _localDb.getDisplaySession(displayIdAtSend);
@@ -846,7 +933,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
                 // 切换 DisplaySession
                 await _localDb.switchBackendId(displayIdAtSend, newSessionId);
-                final responsePreview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
+                final responsePreview = response.trim().length > 100 ? '${response.trim().substring(0, 100)}...' : response.trim();
                 final updatedDs = ds.copyWith(
                   currentBackendId: newSessionId,
                   preview: responsePreview,
@@ -863,14 +950,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (idx >= 0) _displaySessions[idx] = updatedDs;
                     final didx = _displayedDisplaySessions.indexWhere((s) => s.id == displayIdAtSend);
                     if (didx >= 0) _displayedDisplaySessions[didx] = updatedDs;
-                    if (_activeDisplaySession?.id == displayIdAtSend) {
+                    if (isCurrentSession) {
                       _activeDisplaySession = updatedDs;
                       if (_segmentsCommitted < response.length) {
                         _messages.add(_Message(text: response.substring(_segmentsCommitted), isUser: false, timestamp: DateTime.now()));
                       }
                     }
                     _streamingContent = '';
-                    _sending = false;
+                    _sendingPerSession.remove(displayIdAtSend);
                     _segmentsCommitted = 0;
                   });
                 }
@@ -881,7 +968,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   cached.add(_Message(text: response, isUser: false, timestamp: DateTime.now()));
                 }
                 // 更新预览
-                final responsePreview = response.length > 100 ? '${response.substring(0, 100)}...' : response;
+                final responsePreview = response.trim().length > 100 ? '${response.trim().substring(0, 100)}...' : response.trim();
                 final previewUpdated = ds.copyWith(
                   preview: responsePreview,
                   updatedAt: DateTime.now(),
@@ -893,13 +980,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (idx >= 0) _displaySessions[idx] = previewUpdated;
                     final didx = _displayedDisplaySessions.indexWhere((s) => s.id == displayIdAtSend);
                     if (didx >= 0) _displayedDisplaySessions[didx] = previewUpdated;
-                    if (_activeDisplaySession?.id == displayIdAtSend) {
+                    if (isCurrentSession) {
                       if (_segmentsCommitted < response.length) {
                         _messages.add(_Message(text: response.substring(_segmentsCommitted), isUser: false, timestamp: DateTime.now()));
                       }
                     }
                     _streamingContent = '';
-                    _sending = false;
+                    _sendingPerSession.remove(displayIdAtSend);
                     _segmentsCommitted = 0;
                   });
                 }
@@ -912,8 +999,13 @@ class _ChatScreenState extends State<ChatScreen> {
             _streamingSessions.remove(displayIdAtSend);
             if (mounted) {
               setState(() {
+                _messages.add(_Message(
+                    text: '⚠️ 未收到回复，可能是模型配置或网络问题',
+                    isUser: false,
+                    timestamp: DateTime.now(),
+                    isError: true));
                 _streamingContent = '';
-                _sending = false;
+                _sendingPerSession.remove(displayIdAtSend);
                 _segmentsCommitted = 0;
               });
             }
@@ -929,7 +1021,7 @@ class _ChatScreenState extends State<ChatScreen> {
           if (mounted) {
             setState(() {
               _messages.add(_Message(text: '⚠️ 发送失败: $e', isUser: false, timestamp: DateTime.now(), isError: true));
-              _sending = false;
+              _sendingPerSession.remove(displayIdAtSend ?? localDisplayId);
               _streamingContent = '';
               _segmentsCommitted = 0;
             });
@@ -939,7 +1031,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       // ★ 记录订阅
-      final sid = displayIdAtSend ?? '__pending_new__';
+      final sid = displayIdAtSend ?? '__pending__';
       _streamSubscriptions[sid] = sub;
       _streamingBuffers[sid] = '';
       _streamingSessions.add(sid);
@@ -953,7 +1045,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         setState(() {
           _messages.add(_Message(text: '⚠️ 连接失败: $e', isUser: false, timestamp: DateTime.now(), isError: true));
-          _sending = false;
+          _sendingPerSession.remove(displayIdAtSend ?? localDisplayId);
         });
       }
     } finally {
@@ -986,21 +1078,72 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final s = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.surfaceContainerLow,
-        title: Text(_activeDisplaySession?.displayTitle ?? '新对话'),
-        actions: [
-          if (_activeDisplaySession != null)
-            IconButton(
-              icon: const Icon(Icons.close),
-              onPressed: _newChat,
-              tooltip: '新对话',
-            ),
-        ],
-      ),
-      body: Row(
+      body: Column(
         children: [
+          // ── 顶栏（Agent 状态 + 操作） ──
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            decoration: BoxDecoration(
+              color: s.surfaceContainerHighest,
+              border: Border(bottom: BorderSide(color: s.outlineVariant.withValues(alpha: 0.5))),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 34, height: 34,
+                  decoration: BoxDecoration(
+                    color: s.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(17),
+                    border: Border.all(color: s.primary.withValues(alpha: 0.5)),
+                  ),
+                  child: Center(child: Text('🤖', style: TextStyle(fontSize: 16))),
+                ),
+                const SizedBox(width: 12),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8, height: 8,
+                      decoration: BoxDecoration(
+                        color: AppTheme.success, shape: BoxShape.circle,
+                        boxShadow: [BoxShadow(color: AppTheme.success.withValues(alpha: 0.4), blurRadius: 4)],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text('Hermes Agent · 就绪',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: s.onSurface)),
+                  ],
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: s.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: Text('主动推理', style: TextStyle(fontSize: 11, color: s.primary)),
+                ),
+                const Spacer(),
+                if (_activeDisplaySession != null)
+                  SizedBox(
+                    width: 36, height: 36,
+                    child: IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      onPressed: _newChat,
+                      tooltip: '新对话',
+                      visualDensity: VisualDensity.compact,
+                      style: IconButton.styleFrom(foregroundColor: s.onSurfaceVariant),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          // ── 内容 ──
+          Expanded(
+            child: Row(
+              children: [
           // Session sidebar
           SizedBox(
             width: 280,
@@ -1029,7 +1172,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: OutlinedButton.icon(
                       onPressed: _newChat,
                       icon: Icon(Icons.add, size: 18),
-                      label: Text('新对话'),
+                      label: Text('新对话', style: TextStyle(fontSize: 13)),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppTheme.primary,
                         side: BorderSide(
@@ -1170,7 +1313,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   onFileDropped: (files) =>
                       setState(() => _attachedFiles.addAll(files)),
                   child: Container(
-                  padding: EdgeInsets.all(12),
+                  padding: EdgeInsets.all(14),
                   decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.surfaceContainerLow,
                     border: Border(
@@ -1225,13 +1368,15 @@ class _ChatScreenState extends State<ChatScreen> {
                                 maxLines: 4,
                                 minLines: 1,
                                 textInputAction: TextInputAction.send,
+                                style: TextStyle(fontSize: 13),
                                 decoration: InputDecoration(
-                                  hintText: '输入消息... / 加载技能\nEnter 发送 · Shift+Enter 换行',
+                                  hintText: '输入消息... / 加载技能 · Enter 发送 · Shift+Enter 换行',
                                   border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
+                                    borderRadius: BorderRadius.circular(28),
                                   ),
                                   contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 12),
+                                      horizontal: 16, vertical: 14),
+                                  hintStyle: TextStyle(fontSize: 13),
                                 ),
                                 onSubmitted: (_) => _sendMessage(),
                               ),
@@ -1248,9 +1393,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     style: IconButton.styleFrom(
                                       backgroundColor: AppTheme.error,
                                       foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
+                                      shape: CircleBorder(),
                                     ),
                                   )
                                 : IconButton(
@@ -1262,9 +1405,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     style: IconButton.styleFrom(
                                       backgroundColor: AppTheme.primary,
                                       foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
+                                      shape: CircleBorder(),
                                     ),
                                   ),
                           ),
@@ -1279,6 +1420,9 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ],
     ),
+      ),
+    ],
+  ),
   );
   }
 
@@ -1483,42 +1627,47 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildThinkingIndicator() {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // AI 头像（与 ChatMessageWidget 一致）
           Container(
-            width: 32, height: 32,
+            width: 36, height: 36,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF2563EB), Color(0xFF60A5FA)],
-              ),
-              borderRadius: BorderRadius.circular(8),
+              color: scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: scheme.primary.withValues(alpha: 0.6)),
             ),
-            child: const Center(
-              child: Text('H',
+            child: Center(
+              child: Text('⚡',
                   style: TextStyle(
-                      color: Colors.white,
+                      color: scheme.primary,
                       fontWeight: FontWeight.bold,
-                      fontSize: 14)),
+                      fontSize: 16)),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           // 消息气泡（与 ChatMessageWidget 一致）
           Flexible(
             child: Container(
-              constraints: const BoxConstraints(maxWidth: 700),
-              padding: const EdgeInsets.all(14),
+              constraints: const BoxConstraints(maxWidth: 715),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
               decoration: BoxDecoration(
                 color: scheme.surfaceContainerHigh,
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(14),
-                  topRight: Radius.circular(14),
-                  bottomLeft: Radius.circular(4),
-                  bottomRight: Radius.circular(14),
+                  topLeft: Radius.circular(2),
+                  topRight: Radius.circular(8),
+                  bottomLeft: Radius.circular(8),
+                  bottomRight: Radius.circular(8),
                 ),
-                border: Border.all(color: scheme.outlineVariant),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -1542,8 +1691,8 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.chat_outlined,
-              size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          Text('🤖',
+              style: TextStyle(fontSize: 64)),
           SizedBox(height: 16),
           Text(
             '选择一个会话或开始新对话',
@@ -1661,7 +1810,7 @@ class _SessionItem extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       child: Material(
         color: selected
-            ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.65)
+            ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
         clipBehavior: Clip.antiAlias,
@@ -1676,7 +1825,7 @@ class _SessionItem extends StatelessWidget {
                     border: Border(
                       left: BorderSide(
                         color: Theme.of(context).colorScheme.primary,
-                        width: 5,
+                        width: 2.5,
                       ),
                     ),
                   )
@@ -1685,13 +1834,6 @@ class _SessionItem extends StatelessWidget {
               padding: EdgeInsets.only(left: selected ? 9 : 12, right: 8, top: 10, bottom: 10),
               child: Row(
                 children: [
-                  // Pin icon
-                  if (pinned)
-                    Padding(
-                      padding: EdgeInsets.only(right: 6),
-                      child: Icon(Icons.push_pin,
-                          size: 12, color: AppTheme.warning),
-                    ),
                   // Status dot
                   Container(
                     width: 8,
@@ -1735,6 +1877,13 @@ class _SessionItem extends StatelessWidget {
                       ],
                     ),
                   ),
+                  // Pin icon
+                  if (pinned)
+                    Padding(
+                      padding: EdgeInsets.only(left: 6),
+                      child: Icon(Icons.push_pin,
+                          size: 12, color: AppTheme.warning),
+                    ),
                 ],
               ),
             ),

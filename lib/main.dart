@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,9 +6,10 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'config/theme.dart';
 import 'services/config_service.dart';
+import 'services/local_db.dart';
 import 'services/connection_manager.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/chat_screen.dart';
@@ -36,16 +38,27 @@ Future<bool> _tryLockInstance() async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Initialize SQLite for desktop
+  sqfliteFfiInit();
+
   // 防止多开 — 独占端口锁，如果绑定失败说明已有实例在运行
   if (!await _tryLockInstance()) {
     exit(0);
   }
 
+  // ★ 启动时立即设置 DB 模式，避免 UI 先加载了默认 local 数据
+  await ConfigService.ensureInitialized();
+  final config = await ConfigService().readDesktopConfig();
+  final modeStr = config['connection_mode'] as String? ?? 'local';
+  final dbMode = modeStr == 'remote' ? 'remote'
+      : (modeStr == 'embedded' ? 'embedded' : 'local');
+  await LocalDatabase().setMode(dbMode);
+
   await windowManager.ensureInitialized();
 
   const windowOptions = WindowOptions(
-    size: Size(1280, 800),
-    minimumSize: Size(1080, 720),
+    size: Size(1440, 960),
+    minimumSize: Size(1215, 800),
     center: true,
     title: 'Hermes Desktop',
     titleBarStyle: TitleBarStyle.hidden,
@@ -154,21 +167,21 @@ class MainShell extends StatefulWidget {
 }
 
 class MainShellState extends State<MainShell> {
-  int _currentIndex = 0;
+  int _currentIndex = 7;
   bool _firstCheckDone = false;
   bool _isMaximized = false;
 
-  final ValueNotifier<int> tabNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<int> tabNotifier = ValueNotifier<int>(7);
 
   static final _navItems = [
-    (Icons.dashboard_outlined, Icons.dashboard, '仪表盘'),
-    (Icons.chat_outlined, Icons.chat, '聊天'),
-    (Icons.schedule_outlined, Icons.schedule, '定时'),
-    (Icons.memory_outlined, Icons.memory, '模型与技能'),
-    (Icons.folder_outlined, Icons.folder, '文件'),
-    (Icons.devices_outlined, Icons.devices, '平台'),
-    (Icons.article_outlined, Icons.article, '日志'),
-    (Icons.settings_outlined, Icons.settings, '设置'),
+    ('📊', '仪表盘'),
+    ('⏱️', '定时任务'),
+    ('🧠', '模型与技能'),
+    ('📁', '文件'),
+    ('🖥️', '平台'),
+    ('📝', '日志'),
+    ('⚙️', '设置'),
+    ('🤖', '聊天'),
   ];
 
   void navigateTo(int index) {
@@ -290,10 +303,8 @@ class MainShellState extends State<MainShell> {
               child: Row(
                 children: [
                   const SizedBox(width: 12),
-                  SvgPicture.asset('assets/logo.svg', width: 18, height: 18),
+                  const Text('⚡', style: TextStyle(fontSize: 16)),
                   const SizedBox(width: 8),
-                  Text('Hermes Desktop',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurface)),
                   const Spacer(),
                   SizedBox(
                     width: 32, height: 32,
@@ -354,38 +365,125 @@ class MainShellState extends State<MainShell> {
           Expanded(
             child: Row(
               children: [
-                NavigationRail(
-                  selectedIndex: _currentIndex,
-                  onDestinationSelected: (i) => navigateTo(i),
-                  labelType: NavigationRailLabelType.all,
-                  groupAlignment: -0.5,
-                  indicatorColor: scheme.secondaryContainer,
-                  leading: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: SvgPicture.asset('assets/logo.svg', width: 40, height: 40),
-                  ),
-                  destinations: _navItems.map((item) {
-                    return NavigationRailDestination(
-                      icon: Icon(item.$1),
-                      selectedIcon: Icon(item.$2, color: scheme.primary),
-                      label: Text(item.$3),
-                    );
-                  }).toList(),
-                  trailing: Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Divider(height: 1),
-                        const SizedBox(height: 8),
-                        IconButton(
-                          icon: const Icon(Icons.help_outline),
-                          onPressed: () => _showHelpDialog(context),
-                          tooltip: '帮助',
-                          style: IconButton.styleFrom(foregroundColor: scheme.onSurfaceVariant),
+                // ── 自定义侧边栏（仿 HTML 设计） ──
+                Container(
+                  width: 220,
+                  color: scheme.surfaceContainerHighest,
+                  child: Column(
+                    children: [
+                      // Logo 区域
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
+                          ),
                         ),
-                      ],
-                    ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 36, height: 36,
+                              decoration: BoxDecoration(
+                                color: scheme.surfaceContainerLow,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: scheme.primary.withValues(alpha: 0.4)),
+                              ),
+                              child: Center(
+                                child: Text('⚡', style: TextStyle(
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.bold, fontSize: 20)),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text('Hermes Desktop',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600, fontSize: 14,
+                                    color: scheme.onSurface,
+                                  )),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // 导航项
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            children: _navItems.asMap().entries.expand((entry) {
+                              final i = entry.key;
+                              final item = entry.value;
+                              final selected = i == _currentIndex;
+                              final list = <Widget>[];
+                              if (i == 7) {
+                                list.add(Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  child: Divider(height: 1, color: scheme.outlineVariant.withValues(alpha: 0.6)),
+                                ));
+                              }
+                              list.add(Container(
+                                margin: const EdgeInsets.only(bottom: 2),
+                                decoration: BoxDecoration(
+                                  color: selected
+                                      ? scheme.primary.withValues(alpha: 0.1)
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: selected
+                                      ? Border(
+                                          left: BorderSide(color: scheme.primary, width: 2.5),
+                                        )
+                                      : null,
+                                ),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(10),
+                                  onTap: () => navigateTo(i),
+                                  hoverColor: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                    child: Row(
+                                      children: [
+                                        Text(item.$1, style: TextStyle(fontSize: 20)),
+                                        const SizedBox(width: 14),
+                                        Text(item.$2, style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                                          color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                                        )),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ));
+                              return list;
+                            }).toList(),
+                          ),
+                        ),
+                      ),
+                      // 底部状态
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            top: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
+                          ),
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () => _showHelpDialog(context),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              children: [
+                                Icon(Icons.help_outline, size: 16, color: scheme.onSurfaceVariant),
+                                const SizedBox(width: 8),
+                                Text('使用帮助',
+                                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 VerticalDivider(width: 1, color: scheme.outlineVariant),
@@ -448,14 +546,14 @@ class MainShellState extends State<MainShell> {
                         child: IndexedStack(
                           index: _currentIndex,
                           children: [
-                            DashboardScreen(onNavigate: navigateTo, tabNotifier: tabNotifier),
-                            const ChatScreen(),
-                            const CronScreen(),
-                            ModelsScreen(onNavigate: navigateTo),
-                            const FileBrowserScreen(),
-                            const PlatformsScreen(),
-                            const LogsScreen(),
-                            const SettingsScreen(),
+                            DashboardScreen(onNavigate: navigateTo, tabNotifier: tabNotifier),  // 0 仪表盘
+                            const CronScreen(),       // 1 定时
+                            ModelsScreen(onNavigate: navigateTo),  // 2 模型与技能
+                            const FileBrowserScreen(), // 3 文件
+                            const PlatformsScreen(),    // 4 平台
+                            const LogsScreen(),         // 5 日志
+                            const SettingsScreen(),     // 6 设置
+                            const ChatScreen(),         // 7 聊天
                           ],
                         ),
                       ),

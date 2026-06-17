@@ -59,13 +59,24 @@ class ConnectionInfo {
 }
 
 class ConnectionManager {
-  ConnectionManager._();
+  ConnectionManager._() {
+    // ★ 统一入口：任何地方设 connected 状态都会触发页面刷新
+    stateNotifier.addListener(_onStateChanged);
+  }
   static final ConnectionManager _instance = ConnectionManager._();
   factory ConnectionManager() => _instance;
 
   final ValueNotifier<ConnectionInfo> stateNotifier =
       ValueNotifier(const ConnectionInfo());
   ConnectionInfo get state => stateNotifier.value;
+
+  ConnStatus _lastStatus = ConnStatus.disconnected;
+  void _onStateChanged() {
+    if (state.status == ConnStatus.connected && _lastStatus != ConnStatus.connected) {
+      GatewayService().refreshNotifier.value++;
+    }
+    _lastStatus = state.status;
+  }
 
   final RemoteSshExecutor _remoteExecutor = RemoteSshExecutor();
   final ValueNotifier<SetupState> setupNotifier = ValueNotifier(SetupState.none);
