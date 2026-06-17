@@ -23,16 +23,10 @@ class ChatMessageWidget extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final bgColor = isUser
-        ? scheme.primaryContainer.withValues(alpha: 0.6)
-        : scheme.surfaceContainerHigh;
-    final textColor = isUser ? scheme.onPrimaryContainer : scheme.onSurface;
-    final borderColor = isUser
-        ? scheme.primary.withValues(alpha: 0.2)
-        : scheme.outlineVariant;
+    final textColor = scheme.onSurface;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         mainAxisAlignment:
             isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
@@ -40,22 +34,21 @@ class ChatMessageWidget extends StatelessWidget {
         children: [
           if (!isUser) ...[
             Container(
-              width: 32, height: 32,
+              width: 36, height: 36,
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF2563EB), Color(0xFF60A5FA)],
-                ),
-                borderRadius: BorderRadius.circular(8),
+                color: scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: scheme.primary.withValues(alpha: 0.6)),
               ),
-              child: const Center(
-                child: Text('H',
+              child: Center(
+                child: Text('⚡',
                     style: TextStyle(
-                        color: Colors.white,
+                        color: scheme.primary,
                         fontWeight: FontWeight.bold,
-                        fontSize: 14)),
+                        fontSize: 16)),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
           ],
           Flexible(
             child: GestureDetector(
@@ -63,18 +56,26 @@ class ChatMessageWidget extends StatelessWidget {
               onLongPress: () => _showCopyMenu(context, null),
               child: Container(
                 constraints: BoxConstraints(
-                  maxWidth: isUser ? 600 : 700,
+                  maxWidth: isUser ? 615 : 715,
                 ),
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                 decoration: BoxDecoration(
-                  color: bgColor,
+                  color: isUser
+                      ? Color.lerp(scheme.surfaceContainerHigh, Colors.black, 0.12)!
+                      : scheme.surfaceContainerHigh,
                   borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(14),
-                    topRight: const Radius.circular(14),
-                    bottomLeft: Radius.circular(isUser ? 14 : 4),
-                    bottomRight: Radius.circular(isUser ? 4 : 14),
+                    topLeft: Radius.circular(isUser ? 8 : 2),
+                    topRight: Radius.circular(isUser ? 2 : 8),
+                    bottomLeft: const Radius.circular(8),
+                    bottomRight: const Radius.circular(8),
                   ),
-                  border: Border.all(color: borderColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.15),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -134,15 +135,15 @@ class ChatMessageWidget extends StatelessWidget {
                         ),
                         h1: TextStyle(
                             color: textColor,
-                            fontSize: 20,
+                            fontSize: 14,
                             fontWeight: FontWeight.bold),
                         h2: TextStyle(
                             color: textColor,
-                            fontSize: 17,
+                            fontSize: 14,
                             fontWeight: FontWeight.bold),
                         h3: TextStyle(
                             color: textColor,
-                            fontSize: 15,
+                            fontSize: 14,
                             fontWeight: FontWeight.w600),
                         blockquoteDecoration: BoxDecoration(
                           border: Border(
@@ -150,6 +151,12 @@ class ChatMessageWidget extends StatelessWidget {
                                   color: scheme.primary, width: 3)),
                           color: scheme.surfaceContainerLow,
                         ),
+                        tableHead: TextStyle(
+                            color: textColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold),
+                        tableBody: TextStyle(
+                            color: textColor, fontSize: 14),
                         listBullet: TextStyle(color: scheme.primary),
                         listBulletPadding: const EdgeInsets.only(right: 4),
                         horizontalRuleDecoration: BoxDecoration(
@@ -180,14 +187,20 @@ class ChatMessageWidget extends StatelessWidget {
             ),
           ),
           if (isUser) ...[
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Container(
-              width: 32, height: 32,
+              width: 36, height: 36,
               decoration: BoxDecoration(
-                color: scheme.primaryContainer,
-                borderRadius: BorderRadius.circular(8),
+                color: scheme.primary,
+                borderRadius: BorderRadius.circular(18),
               ),
-              child: Icon(Icons.person, color: scheme.onPrimaryContainer, size: 18),
+              child: Center(
+                child: Text('U',
+                    style: TextStyle(
+                        color: scheme.onPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
+              ),
             ),
           ],
         ],

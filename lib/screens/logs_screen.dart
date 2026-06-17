@@ -215,6 +215,7 @@ class _LogsScreenState extends State<LogsScreen> with SingleTickerProviderStateM
                   width: 200,
                   child: TextField(
                     controller: _searchController,
+                    style: const TextStyle(fontSize: 13),
                     decoration: const InputDecoration(
                       hintText: '搜索日志...',
                       prefixIcon: Icon(Icons.search, size: 18),

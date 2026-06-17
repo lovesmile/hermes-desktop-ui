@@ -159,52 +159,50 @@ class AppTheme {
   );
 
   // ── Typography (Inter 正文 + JetBrains Mono 等宽) ──────────
-  static const String _bodyFont = 'Inter';
-  static const String _monoFont = 'JetBrainsMono';
-
   static TextTheme _textTheme(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
     final Color textColor = isDark ? _neutralTextPrimaryDark : _neutralTextPrimaryLight;
     final Color subtleColor = isDark ? _neutralTextSecondaryDark : _neutralTextSecondaryLight;
 
-    return TextTheme(
+    final base = TextTheme(
       // Display
       displayLarge: _txtStyle(57, FontWeight.w600, -0.25, textColor),
-      displayMedium: _txtStyle(45, FontWeight.w600, 0, textColor),
-      displaySmall: _txtStyle(36, FontWeight.w600, 0, textColor),
+      displayMedium: _txtStyle(48, FontWeight.w600, 0, textColor),
+      displaySmall: _txtStyle(40, FontWeight.w600, 0, textColor),
       // Headline
-      headlineLarge: _txtStyle(32, FontWeight.w600, 0, textColor),
-      headlineMedium: _txtStyle(28, FontWeight.w600, 0, textColor),
-      headlineSmall: _txtStyle(24, FontWeight.w600, 0, textColor),
+      headlineLarge: _txtStyle(36, FontWeight.w600, 0, textColor),
+      headlineMedium: _txtStyle(32, FontWeight.w600, 0, textColor),
+      headlineSmall: _txtStyle(28, FontWeight.w600, 0, textColor),
       // Title (SemiBold)
       titleLarge: _txtStyle(22, FontWeight.w600, 0, textColor),
-      titleMedium: _txtStyle(16, FontWeight.w600, 0.15, textColor),
-      titleSmall: _txtStyle(14, FontWeight.w600, 0.1, textColor),
+      titleMedium: _txtStyle(18, FontWeight.w600, 0.15, textColor),
+      titleSmall: _txtStyle(16, FontWeight.w600, 0.1, textColor),
       // Body (Regular)
-      bodyLarge: _txtStyle(16, FontWeight.w400, 0.5, textColor),
-      bodyMedium: _txtStyle(14, FontWeight.w400, 0.25, textColor),
-      bodySmall: _txtStyle(12, FontWeight.w400, 0.4, subtleColor),
+      bodyLarge: _txtStyle(18, FontWeight.w400, 0.5, textColor),
+      bodyMedium: _txtStyle(16, FontWeight.w400, 0.25, textColor),
+      bodySmall: _txtStyle(14, FontWeight.w400, 0.4, subtleColor),
       // Label (Medium)
-      labelLarge: _txtStyle(14, FontWeight.w500, 0.1, textColor),
-      labelMedium: _txtStyle(12, FontWeight.w500, 0.5, textColor),
-      labelSmall: _txtStyle(11, FontWeight.w500, 0.5, subtleColor),
+      labelLarge: _txtStyle(16, FontWeight.w500, 0.1, textColor),
+      labelMedium: _txtStyle(14, FontWeight.w500, 0.5, textColor),
+      labelSmall: _txtStyle(13, FontWeight.w500, 0.5, subtleColor),
     );
+    return base;
   }
 
   static TextStyle _txtStyle(double size, FontWeight weight, double letterSpacing, Color color) {
     return TextStyle(
-      fontFamily: _bodyFont,
       fontSize: size,
       fontWeight: weight,
       letterSpacing: letterSpacing,
       color: color,
+      fontFamilyFallback: ['PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'sans-serif'],
     );
   }
 
   /// 等宽字体样式（代码块、日志、终端等使用）
   static TextStyle monoStyle(double size, {Color? color, FontWeight weight = FontWeight.w400}) {
     return TextStyle(
-      fontFamily: _monoFont,
+      fontFamily: 'JetBrainsMono',
       fontSize: size,
       fontWeight: weight,
       color: color,
@@ -230,7 +228,7 @@ class AppTheme {
       brightness: brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: bg,
-      fontFamily: _bodyFont,
+      fontFamily: 'Inter',
 
       // ── Card ────────────────────────────────────────────────
       cardTheme: CardThemeData(
@@ -283,8 +281,8 @@ class AppTheme {
           borderSide: BorderSide(color: scheme.primary, width: 2),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        hintStyle: TextStyle(color: scheme.onSurfaceVariant),
-        labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+        hintStyle: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+        labelStyle: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
         prefixIconColor: scheme.onSurfaceVariant,
       ),
 
@@ -312,7 +310,7 @@ class AppTheme {
       // ── SnackBar ────────────────────────────────────────────
       snackBarTheme: SnackBarThemeData(
         backgroundColor: scheme.inverseSurface,
-        contentTextStyle: TextStyle(color: scheme.onInverseSurface, fontFamily: _bodyFont),
+        contentTextStyle: TextStyle(color: scheme.onInverseSurface),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
@@ -356,7 +354,6 @@ class AppTheme {
         centerTitle: false,
         foregroundColor: scheme.onSurface,
         titleTextStyle: TextStyle(
-          fontFamily: _bodyFont,
           color: scheme.onSurface,
           fontSize: 22,
           fontWeight: FontWeight.w600,
@@ -373,7 +370,7 @@ class AppTheme {
 
 /// Theme mode notifier (global toggle)
 class ThemeModeNotifier extends ValueNotifier<bool> {
-  ThemeModeNotifier() : super(false);
+  ThemeModeNotifier() : super(true);
   void toggle() => value = !value;
 }
 
