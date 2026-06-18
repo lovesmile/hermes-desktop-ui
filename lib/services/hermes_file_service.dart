@@ -124,7 +124,8 @@ class HermesFileService {
   Future<String> resolveHermesHome() async {
     final mode = _cm.state.mode;
     // connecting 过渡态不缓存，等真实 mode 确定后再缓存（避免本地路径被当作远程路径缓存）
-    if (_cachedHome != null && _cachedHomeMode == mode && _cm.state.status.index < 2) return _cachedHome!;
+    // 只有 connected(2) 才用缓存，disconnected(0)/connecting(1)/error(3) 都跳过缓存
+    if (_cachedHome != null && _cachedHomeMode == mode && _cm.state.status.index == 2) return _cachedHome!;
     final home = switch (mode) {
       ConnectionMode.embedded => _embeddedHermesHome(),
       ConnectionMode.local || ConnectionMode.remote =>
