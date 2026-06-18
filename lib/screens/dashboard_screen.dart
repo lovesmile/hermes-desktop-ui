@@ -23,6 +23,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final _configService = ConfigService();
   final _localDb = LocalDatabase();
   final _fileService = HermesFileService();
+  ConnStatus _lastConnStatus = ConnStatus.disconnected;
   bool _dashboardLoading = false;
   late final VoidCallback _onRefresh;
 
@@ -67,10 +68,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _onConnectionChanged() {
     if (mounted) setState(() {});
-    // 变成 connected 时才加载，其他状态（connecting/error）不需要重新加载数据
-    if (_cm.state.status == ConnStatus.connected) {
+    final current = _cm.state.status;
+    // 只有变成 connected 时才加载，避免 connecting 中间状态频繁触发
+    if (current == ConnStatus.connected && _lastConnStatus != ConnStatus.connected) {
       _loadData();
     }
+    _lastConnStatus = current;
   }
 
   void _onTabChanged() {

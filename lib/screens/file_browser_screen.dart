@@ -18,6 +18,7 @@ class FileBrowserScreen extends StatefulWidget {
 class _FileBrowserScreenState extends State<FileBrowserScreen> {
   final _fileService = HermesFileService();
   final _cm = ConnectionManager();
+  ConnStatus _lastConnStatus = ConnStatus.disconnected;
 
   String _currentPath = '';
   bool _loading = true;
@@ -77,12 +78,14 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   }
 
   void _onConnectionChanged() {
-    if (_cm.state.status == ConnStatus.connected) {
+    final current = _cm.state.status;
+    if (current == ConnStatus.connected && _lastConnStatus != ConnStatus.connected) {
       _dirCache.clear();
       _isLocal = _cm.state.mode == ConnectionMode.local;
       _previewPath = null;
       _resolveHome();
     }
+    _lastConnStatus = current;
   }
 
   void _onModeChanged() {

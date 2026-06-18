@@ -20,6 +20,7 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
   final _gateway = GatewayService();
   final _configService = ConfigService();
   final _fileService = HermesFileService();
+  ConnStatus _lastConnStatus = ConnStatus.disconnected;
   late final TabController _tabController;
   List<CronJob> _jobs = [];
   List<CronJob> _systemJobs = [];
@@ -46,9 +47,11 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
   }
 
   void _onConnectionChanged() {
-    if (_cm.state.status == ConnStatus.connected) {
+    final current = _cm.state.status;
+    if (current == ConnStatus.connected && _lastConnStatus != ConnStatus.connected) {
       _loadJobs();
     }
+    _lastConnStatus = current;
   }
 
   void _onModeChanged() {

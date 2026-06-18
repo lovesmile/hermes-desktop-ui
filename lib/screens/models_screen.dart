@@ -25,6 +25,7 @@ class ModelsScreen extends StatefulWidget {
 class _ModelsScreenState extends State<ModelsScreen> {
   final _configService = ConfigService();
   final _cm = ConnectionManager();
+  ConnStatus _lastConnStatus = ConnStatus.disconnected;
   List<Map<String, String>> _skills = [];
   Map<String, String> _modelConfig = {};
   bool _loading = true;
@@ -47,9 +48,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
   }
 
   void _onConnectionChanged() {
-    if (_cm.state.status == ConnStatus.connected) {
+    final current = _cm.state.status;
+    if (current == ConnStatus.connected && _lastConnStatus != ConnStatus.connected) {
       _loadData(forceRefresh: true);
     }
+    _lastConnStatus = current;
   }
 
   Future<void> _loadData({bool forceRefresh = false, bool silent = false}) async {
