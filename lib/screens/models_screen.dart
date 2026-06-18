@@ -56,6 +56,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
   }
 
   Future<void> _loadData({bool forceRefresh = false, bool silent = false}) async {
+    // connecting 过渡态不加载，避免用错误路径（如 /home/unknown）缓存数据
+    if (_cm.state.status != ConnStatus.connected) {
+      if (!silent) setState(() => _loading = true);
+      return;
+    }
     if (forceRefresh) HermesFileService.clearCache();
     if (!silent) setState(() => _loading = true);
     try {

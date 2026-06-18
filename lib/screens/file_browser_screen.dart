@@ -96,6 +96,8 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   }
 
   Future<void> _resolveHome() async {
+    // connecting 过渡态不加载，避免用错误路径缓存数据
+    if (_cm.state.status != ConnStatus.connected) return;
     _dirCache.clear();
     setState(() => _loading = true);
     try {

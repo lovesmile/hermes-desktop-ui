@@ -100,6 +100,11 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _loadJobs() async {
+    // connecting 过渡态不加载，避免用错误路径缓存数据
+    if (_cm.state.status != ConnStatus.connected) {
+      setState(() => _loading = true);
+      return;
+    }
     setState(() => _loading = true);
     try {
       final jobs = await _readJobsFromFile();
