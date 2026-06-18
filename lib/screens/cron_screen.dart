@@ -34,13 +34,21 @@ class _CronScreenState extends State<CronScreen> with SingleTickerProviderStateM
     unawaited(_prefetchSkills());
     _loadJobs();
     GatewayService().refreshNotifier.addListener(_onModeChanged);
+    _cm.stateNotifier.addListener(_onConnectionChanged);
   }
 
   @override
   void dispose() {
     GatewayService().refreshNotifier.removeListener(_onModeChanged);
+    _cm.stateNotifier.removeListener(_onConnectionChanged);
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _onConnectionChanged() {
+    if (_cm.state.status == ConnStatus.connected) {
+      _loadJobs();
+    }
   }
 
   void _onModeChanged() {

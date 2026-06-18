@@ -24,6 +24,7 @@ class ModelsScreen extends StatefulWidget {
 
 class _ModelsScreenState extends State<ModelsScreen> {
   final _configService = ConfigService();
+  final _cm = ConnectionManager();
   List<Map<String, String>> _skills = [];
   Map<String, String> _modelConfig = {};
   bool _loading = true;
@@ -35,12 +36,20 @@ class _ModelsScreenState extends State<ModelsScreen> {
     _onRefresh = () => _loadData(forceRefresh: true);
     _loadData();
     GatewayService().refreshNotifier.addListener(_onRefresh);
+    ConnectionManager().stateNotifier.addListener(_onConnectionChanged);
   }
 
   @override
   void dispose() {
     GatewayService().refreshNotifier.removeListener(_onRefresh);
+    ConnectionManager().stateNotifier.removeListener(_onConnectionChanged);
     super.dispose();
+  }
+
+  void _onConnectionChanged() {
+    if (_cm.state.status == ConnStatus.connected) {
+      _loadData(forceRefresh: true);
+    }
   }
 
   Future<void> _loadData({bool forceRefresh = false, bool silent = false}) async {

@@ -66,12 +66,23 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     _isLocal = _cm.state.mode == ConnectionMode.local;
     _resolveHome();
     GatewayService().refreshNotifier.addListener(_onModeChanged);
+    _cm.stateNotifier.addListener(_onConnectionChanged);
   }
 
   @override
   void dispose() {
     GatewayService().refreshNotifier.removeListener(_onModeChanged);
+    _cm.stateNotifier.removeListener(_onConnectionChanged);
     super.dispose();
+  }
+
+  void _onConnectionChanged() {
+    if (_cm.state.status == ConnStatus.connected) {
+      _dirCache.clear();
+      _isLocal = _cm.state.mode == ConnectionMode.local;
+      _previewPath = null;
+      _resolveHome();
+    }
   }
 
   void _onModeChanged() {
