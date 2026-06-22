@@ -14,6 +14,9 @@ import 'remote_bridge.dart';
 import 'remote_ssh_executor.dart';
 import 'ssh_config.dart';
 import 'wsl_bridge.dart';
+import 'mac/mac_local_bridge.dart';
+import 'mac/mac_embedded_bridge.dart';
+import 'mac/mac_platform.dart';
 
 export 'ssh_config.dart';
 
@@ -81,6 +84,8 @@ class ConnectionManager {
   final RemoteSshExecutor _remoteExecutor = RemoteSshExecutor();
   final ValueNotifier<SetupState> setupNotifier = ValueNotifier(SetupState.none);
 
+  bool get _isMac => Platform.isMacOS;
+
   String _wslDistro = 'Ubuntu';
   String get wslDistro => _wslDistro;
   String _wslIp = 'localhost';
@@ -94,9 +99,12 @@ class ConnectionManager {
   int _tunnelPort = 0;
 
   late final WslBridge _wslBridge = WslBridge(distro: _wslDistro);
+  late final MacLocalBridge _macLocalBridge = MacLocalBridge();
   late final RemoteBridge _remoteBridge = RemoteBridge(_remoteExecutor);
   late final EmbeddedBridge _embeddedBridge =
       EmbeddedBridge(bundlePath: hermesBundlePath);
+  late final MacEmbeddedBridge _macEmbeddedBridge =
+      MacEmbeddedBridge(bundlePath: hermesBundlePath);
   Process? _embeddedGatewayProcess;
   bool _embeddedGatewayExited = false;
   bool _restartingEmbedded = false; // 防止健康检查定时器并发重启
@@ -107,6 +115,7 @@ class ConnectionManager {
       'https://github.com/lovesmile/hermes-desktop-ui/releases/latest/download/hermes-bundle-windows.zip';
 
   String get hermesBundlePath {
+    if (_isMac) return MacPlatform().hermesBundlePath;
     final userHome =
         Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
     return '$userHome\\.hermes-desktop\\hermes';
@@ -151,6 +160,11 @@ class ConnectionManager {
         ssh = const SshConfig();
     }
     _wslBridge.setDistro(_wslDistro);
+
+    // macOS 不使用 WSL
+    if (_isMac && mode == ConnectionMode.local) {
+      await _macLocalBridge.connect();
+    }
 
     // 确保首次启动检查所需的字段存在
     if (!config.containsKey('gateway_url')) {
@@ -197,6 +211,9 @@ class ConnectionManager {
   Future<String> resolveHermesHome() async {
     switch (state.mode) {
       case ConnectionMode.embedded:
+        if (_isMac) {
+          return '${MacPlatform().homeDir}/.hermes';
+        }
         final userHome = Platform.environment['USERPROFILE'] ??
             Platform.environment['HOME'] ??
             '';
@@ -218,6 +235,10 @@ class ConnectionManager {
   }) {
     switch (state.mode) {
       case ConnectionMode.embedded:
+        if (_isMac) {
+          return runShell("cat '${path.replaceAll("'", "'\\''")}' 2>/dev/null",
+              allowFailure: allowFailure);
+        }
         return runShell('type "${path.replaceAll('"', '""')}" 2>nul',
             allowFailure: allowFailure);
       case ConnectionMode.local:
@@ -262,6 +283,14 @@ class ConnectionManager {
   }) {
     switch (state.mode) {
       case ConnectionMode.embedded: {
+        if (_isMac) {
+          final hermesBin = '${hermesBundlePath}/hermes';
+          final joined =
+              args.map((a) => "'${a.replaceAll("'", "'\\''")}'").join(' ');
+          final cmd =
+              'if [ -x "$hermesBin" ]; then "$hermesBin" --accept-hooks cron $joined; else hermes --accept-hooks cron $joined; fi 2>&1';
+          return runShell(cmd, allowFailure: allowFailure);
+        }
         final hermesExe = '$hermesBundlePath\\hermes.exe';
         final joined =
             args.map((a) => '"${a.replaceAll('"', '""')}"').join(' ');
@@ -291,6 +320,10 @@ class ConnectionManager {
 
     switch (state.mode) {
       case ConnectionMode.embedded: {
+        if (_isMac) {
+          final hermesBin = '${hermesBundlePath}/hermes';
+          return 'if [ -x "$hermesBin" ]; then "$hermesBin" --accept-hooks cron $suffix; else hermes --accept-hooks cron $suffix; fi';
+        }
         final hermesExe = '$hermesBundlePath\\hermes.exe'.replaceAll('"', '""');
         return 'if exist "$hermesExe" ( "$hermesExe" --accept-hooks cron $suffix ) else ( hermes --accept-hooks cron $suffix )';
       }
@@ -309,8 +342,14 @@ class ConnectionManager {
   Future<Process> startShellProcess(String command) {
     switch (state.mode) {
       case ConnectionMode.local:
+        if (_isMac) {
+          return Process.start('/bin/bash', ['-c', command]);
+        }
         return Process.start('wsl.exe', ['-d', _wslDistro, 'bash', '-c', command]);
       case ConnectionMode.embedded:
+        if (_isMac) {
+          return Process.start('/bin/bash', ['-c', command]);
+        }
         return Process.start('cmd.exe', ['/c', command]);
       case ConnectionMode.remote:
         throw UnsupportedError('Streaming shell process is not supported in remote mode');
@@ -335,8 +374,9 @@ class ConnectionManager {
       return true;
     }
 
-    // 2. 本地模式：自动检测 WSL 中 Gateway 的实际端口
-    if (state.mode == ConnectionMode.local && _wslBridge.isConnected) {
+    // 2. 本地模式：自动检测 Gateway 的实际端口
+    if (state.mode == ConnectionMode.local &&
+        (_isMac || _wslBridge.isConnected)) {
       final detectedPort = await _detectGatewayPort();
       if (detectedPort != null && detectedPort != port) {
         final cfg = await ConfigService().readDesktopConfig();
@@ -359,7 +399,9 @@ class ConnectionManager {
 
     // 3. 全部失败 → 显示可操作的错误提示
     final hint = state.mode == ConnectionMode.local
-        ? '连接失败 (端口 $port)，请确认 WSL 中已运行: hermes gateway run'
+        ? (_isMac
+            ? '连接失败 (端口 $port)，请确认已运行: hermes gateway run'
+            : '连接失败 (端口 $port)，请确认 WSL 中已运行: hermes gateway run')
         : '连接失败 (端口 $port)，请在设置中检查端口配置';
     stateNotifier.value = state.copyWith(
       status: ConnStatus.error,
@@ -395,8 +437,9 @@ class ConnectionManager {
   /// 通过 WSL 检测 Gateway 实际监听端口
   Future<int?> _detectGatewayPort() async {
     try {
+      final bridge = _bridgeForMode(ConnectionMode.local);
       // 优先读 .env 中的端口配置
-      final result = await _wslBridge.exec(
+      final result = await bridge.exec(
         'grep -oP "^API_SERVER_PORT=\\\K\d+" ~/.hermes/.env 2>/dev/null || true',
       );
       final trimmed = result.stdout.trim();
@@ -431,9 +474,12 @@ class ConnectionManager {
     if (config.password == null || config.password!.isEmpty) return config;
     if (config.keyPath != null && config.keyPath!.isNotEmpty) return config;
 
-    final home = Platform.environment['USERPROFILE'] ?? '';
-    final sshDir = '$home\\.hermes\\ssh';
-    final keyPath = '$sshDir\\id_ed25519_${config.host}';
+    final sshDir = _isMac
+        ? MacPlatform().sshKeyDir
+        : '${Platform.environment['USERPROFILE'] ?? ''}\\.hermes\\ssh';
+    final keyPath = _isMac
+        ? MacPlatform().sshKeyPath(config.host)
+        : '$sshDir\\id_ed25519_${config.host}';
 
     if (await File(keyPath).exists()) {
       return config.copyWith(keyPath: keyPath, password: null);
@@ -451,28 +497,40 @@ class ConnectionManager {
 
       final pubKey = await File('$keyPath.pub').readAsString();
       final escapedPw = _shQuote(config.password!);
-      final sshArgs = [
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', 'ConnectTimeout=10',
-      ];
-      if (config.port != 22) {
-        sshArgs.addAll(['-p', config.port.toString()]);
+
+      bool uploadOk;
+      if (_isMac) {
+        uploadOk = await MacPlatform().uploadSshKey(
+          publicKey: pubKey,
+          user: config.user,
+          host: config.host,
+          port: config.port,
+          password: config.password,
+        );
+      } else {
+        final sshArgs = [
+          '-o', 'StrictHostKeyChecking=accept-new',
+          '-o', 'ConnectTimeout=10',
+        ];
+        if (config.port != 22) {
+          sshArgs.addAll(['-p', config.port.toString()]);
+        }
+        sshArgs.add('${config.user}@${config.host}');
+
+        final uploadProc = await Process.start('wsl.exe', [
+          '-d', _wslDistro,
+          'sshpass', '-p', escapedPw, 'ssh',
+          ...sshArgs,
+          'mkdir -p ~/.ssh && chmod 700 ~/.ssh && '
+              'cat >> ~/.ssh/authorized_keys && '
+              'chmod 600 ~/.ssh/authorized_keys',
+        ]);
+        uploadProc.stdin.writeln(pubKey);
+        uploadProc.stdin.close();
+        uploadOk = await uploadProc.exitCode == 0;
       }
-      sshArgs.add('${config.user}@${config.host}');
 
-      final uploadProc = await Process.start('wsl.exe', [
-        '-d', _wslDistro,
-        'sshpass', '-p', escapedPw, 'ssh',
-        ...sshArgs,
-        'mkdir -p ~/.ssh && chmod 700 ~/.ssh && '
-            'cat >> ~/.ssh/authorized_keys && '
-            'chmod 600 ~/.ssh/authorized_keys',
-      ]);
-      uploadProc.stdin.writeln(pubKey);
-      uploadProc.stdin.close();
-      final uploadCode = await uploadProc.exitCode;
-
-      if (uploadCode != 0) return config;
+      if (!uploadOk) return config;
 
       // 保存配置
       final dc = await ConfigService().readDesktopConfig();
@@ -754,7 +812,7 @@ echo "NO_METHOD"
   }
 
   Future<void> switchToLocal() async {
-    await detectWslIp();
+    if (!_isMac) await detectWslIp();
     final desktopConfig = await ConfigService().readDesktopConfig();
     final localCfg = (desktopConfig['local'] as Map?) ?? {};
     final localPort = localCfg['gateway_port'] as int? ?? 8642;
@@ -765,7 +823,11 @@ echo "NO_METHOD"
       message: '切换到本地模式...',
       port: localPort,
     );
-    await _wslBridge.connect();
+    if (_isMac) {
+      await _macLocalBridge.connect();
+    } else {
+      await _wslBridge.connect();
+    }
 
     bool restartOk = true;
     final alreadyHealthy = await _checkHealth(state.port);
@@ -806,18 +868,23 @@ echo "NO_METHOD"
       // 20s 仍未就绪 → 报告错误，不留"连接中"悬空
       stateNotifier.value = state.copyWith(
         status: ConnStatus.error,
-        message: 'Gateway 未响应，请确认 WSL 中 hermes gateway 是否正常运行',
+        message: _isMac
+            ? 'Gateway 未响应，请确认已运行: hermes gateway run'
+            : 'Gateway 未响应，请确认 WSL 中 hermes gateway 是否正常运行',
       );
     } else {
       stateNotifier.value = state.copyWith(
         status: ConnStatus.error,
-        message: '本地 Gateway 重启失败：未找到 hermes 命令，请检查 WSL 中 hermes 是否安装',
+        message: _isMac
+            ? '本地 Gateway 重启失败：未找到 hermes 命令，请检查 hermes 是否安装'
+            : '本地 Gateway 重启失败：未找到 hermes 命令，请检查 WSL 中 hermes 是否安装',
       );
     }
   }
 
   Future<bool> _restartLocalGatewayShell(String apiKey) async {
-    return _wslBridge.exec(
+    final bridge = _isMac ? _macLocalBridge : _wslBridge;
+    return bridge.exec(
       '${hermesBinShell}'
       r"sed -i '/^API_SERVER_KEY=/d' ~/.hermes/.env 2>/dev/null; "
       'echo "API_SERVER_KEY=$apiKey" >> ~/.hermes/.env; '
@@ -848,44 +915,88 @@ echo "NO_METHOD"
       message: '切换到内嵌模式...',
       port: freePort,
     );
-    await _embeddedBridge.connect();
+    if (_isMac) {
+      await _macEmbeddedBridge.connect();
+    } else {
+      await _embeddedBridge.connect();
+    }
     await _applyConnectionContext(namespace: 'embedded', serverId: 'embedded');
 
-    // 确保 hermes.exe 存在，否则自动下载
-    final exePath = '$hermesBundlePath\\hermes.exe';
+    // 确保二进制存在，否则自动下载
+    final exePath = _isMac
+        ? '${hermesBundlePath}/hermes'
+        : '$hermesBundlePath\\hermes.exe';
     if (!await File(exePath).exists()) {
-      // 先检查安装包自带的 hermes.exe（{app}\hermes\hermes.exe）
-      final appDir = File(Platform.resolvedExecutable).parent.path;
-      final bundledExe = '$appDir\\hermes\\hermes.exe';
-      if (await File(bundledExe).exists()) {
-        await Directory(hermesBundlePath).create(recursive: true);
-        await File(bundledExe).copy(exePath);
-      } else {
-        stateNotifier.value = state.copyWith(
-          status: ConnStatus.connecting,
-          message: '正在下载内嵌 Hermes...',
-        );
-        try {
-          final zipPath = await downloadHermesBundle(defaultHermesDownloadUrl);
+      if (_isMac) {
+        // macOS: 检查安装包自带的 hermes
+        final appDir = File(Platform.resolvedExecutable).parent.path;
+        final bundledExe = '$appDir/hermes/hermes';
+        if (await File(bundledExe).exists()) {
+          await Directory(hermesBundlePath).create(recursive: true);
+          await File(bundledExe).copy(exePath);
+        } else {
           stateNotifier.value = state.copyWith(
             status: ConnStatus.connecting,
-            message: '正在安装...',
+            message: '正在下载内嵌 Hermes...',
           );
-          await extractBundle(zipPath);
-          try { await File(zipPath).delete(); } catch (_) {}
-          if (!await File(exePath).exists()) {
+          try {
+            final archivePath = await downloadHermesBundle(
+                MacPlatform().hermesDownloadUrl);
+            stateNotifier.value = state.copyWith(
+              status: ConnStatus.connecting,
+              message: '正在安装...',
+            );
+            await MacPlatform().extractBundle(archivePath, hermesBundlePath);
+            try { await File(archivePath).delete(); } catch (_) {}
+            if (!await File(exePath).exists()) {
+              stateNotifier.value = state.copyWith(
+                status: ConnStatus.error,
+                message: '安装失败：解压后未找到 hermes',
+              );
+              return;
+            }
+          } catch (e) {
             stateNotifier.value = state.copyWith(
               status: ConnStatus.error,
-              message: '安装失败：解压后未找到 hermes.exe',
+              message: '下载或安装失败: $e',
             );
             return;
           }
-        } catch (e) {
+        }
+      } else {
+        // Windows: 先检查安装包自带的 hermes.exe（{app}\hermes\hermes.exe）
+        final appDir = File(Platform.resolvedExecutable).parent.path;
+        final bundledExe = '$appDir\\hermes\\hermes.exe';
+        if (await File(bundledExe).exists()) {
+          await Directory(hermesBundlePath).create(recursive: true);
+          await File(bundledExe).copy(exePath);
+        } else {
           stateNotifier.value = state.copyWith(
-            status: ConnStatus.error,
-            message: '下载或安装失败: $e',
+            status: ConnStatus.connecting,
+            message: '正在下载内嵌 Hermes...',
           );
-          return;
+          try {
+            final zipPath = await downloadHermesBundle(defaultHermesDownloadUrl);
+            stateNotifier.value = state.copyWith(
+              status: ConnStatus.connecting,
+              message: '正在安装...',
+            );
+            await extractBundle(zipPath);
+            try { await File(zipPath).delete(); } catch (_) {}
+            if (!await File(exePath).exists()) {
+              stateNotifier.value = state.copyWith(
+                status: ConnStatus.error,
+                message: '安装失败：解压后未找到 hermes.exe',
+              );
+              return;
+            }
+          } catch (e) {
+            stateNotifier.value = state.copyWith(
+              status: ConnStatus.error,
+              message: '下载或安装失败: $e',
+            );
+            return;
+          }
         }
       }
     }
@@ -906,15 +1017,17 @@ echo "NO_METHOD"
   Future<bool> _ensureEmbeddedGatewayRunning() async {
     if (_restartingEmbedded) return false;
     _restartingEmbedded = true;
-    final exePath = '$hermesBundlePath\\hermes.exe';
+    final exePath = _isMac
+        ? '${hermesBundlePath}/hermes'
+        : '$hermesBundlePath\\hermes.exe';
     if (!await File(exePath).exists()) { _restartingEmbedded = false; return false; }
 
-    final userHome = Platform.environment['USERPROFILE'] ?? '';
-    final hermesDir = Directory('$userHome\\.hermes');
+    final userHome = _isMac ? MacPlatform().homeDir : (Platform.environment['USERPROFILE'] ?? '');
+    final hermesDir = Directory(_isMac ? '$userHome/.hermes' : '$userHome\\.hermes');
     if (!hermesDir.existsSync()) hermesDir.createSync(recursive: true);
 
     // 确保 .env 中有 API_SERVER_KEY（API Server 必需）、API_SERVER_PORT、API_SERVER_ENABLED
-    final envFile = File('$userHome\\.hermes\\.env');
+    final envFile = File(_isMac ? '$userHome/.hermes/.env' : '$userHome\\.hermes\\.env');
     final oldLines = envFile.existsSync()
         ? await envFile.readAsString().then((s) => s.split('\n')
             .where((l) => l.trim().isNotEmpty && !l.trim().startsWith('# .env not found'))
@@ -933,10 +1046,14 @@ echo "NO_METHOD"
     ]);
     await envFile.writeAsString('${cleanLines.join('\n')}\n');
     // 清理残留进程和锁文件：先杀进程，等锁确实释放了再启动
-    await Process.run('taskkill', ['/F', '/IM', 'hermes.exe']);
+    if (_isMac) {
+      await MacPlatform().killProcess('hermes');
+    } else {
+      await Process.run('taskkill', ['/F', '/IM', 'hermes.exe']);
+    }
     final lockFiles = ['gateway.lock', 'runtime.lock', 'hermes.pid'];
     for (final lock in lockFiles) {
-      final f = File('$userHome\\.hermes\\$lock');
+      final f = File(_isMac ? '$userHome/.hermes/$lock' : '$userHome\\.hermes\\$lock');
       for (int i = 0; i < 10; i++) {
         if (!await f.exists()) break;
         try {
@@ -949,12 +1066,12 @@ echo "NO_METHOD"
       }
     }
     // 启动 Gateway 守护进程（不等待退出）
-    // runInShell: false → Process.kill() 直接杀 hermes.exe（不经过 cmd.exe），避免锁残留
+    // runInShell: false → Process.kill() 直接杀 hermes（不经过 cmd.exe），避免锁残留
     _embeddedGatewayProcess = await Process.start(
       exePath,
       ['gateway', 'run'],
-      runInShell: false,
-      workingDirectory: '$userHome\\.hermes',
+      runInShell: _isMac,
+      workingDirectory: _isMac ? '$userHome/.hermes' : '$userHome\\.hermes',
     );
     // 捕获 stderr 用于诊断启动失败原因
     _lastEmbeddedStderr = '';
@@ -1057,14 +1174,25 @@ echo "NO_METHOD"
       _remoteBridge.disconnect(),
       _wslBridge.disconnect(),
       _embeddedBridge.disconnect(),
+      _macLocalBridge.disconnect(),
+      _macEmbeddedBridge.disconnect(),
     ]);
-    // 只有内嵌模式才杀 hermes.exe，本地/远程模式不要动服务端进程
+    // 只有内嵌模式才杀 hermes，本地/远程模式不要动服务端进程
     if (state.mode == ConnectionMode.embedded) {
-      await Process.run('taskkill', ['/F', '/IM', 'hermes.exe']);
-      final userHome = Platform.environment['USERPROFILE'] ?? '';
-      for (final lock in ['gateway.lock', 'runtime.lock', 'hermes.pid', 'auth.lock']) {
-        final f = File('$userHome\\.hermes\\$lock');
-        if (await f.exists()) try { await f.delete(); } catch (_) {}
+      if (_isMac) {
+        await MacPlatform().killProcess('hermes');
+        final userHome = MacPlatform().homeDir;
+        for (final lock in ['gateway.lock', 'runtime.lock', 'hermes.pid', 'auth.lock']) {
+          final f = File('$userHome/.hermes/$lock');
+          if (await f.exists()) try { await f.delete(); } catch (_) {}
+        }
+      } else {
+        await Process.run('taskkill', ['/F', '/IM', 'hermes.exe']);
+        final userHome = Platform.environment['USERPROFILE'] ?? '';
+        for (final lock in ['gateway.lock', 'runtime.lock', 'hermes.pid', 'auth.lock']) {
+          final f = File('$userHome\\.hermes\\$lock');
+          if (await f.exists()) try { await f.delete(); } catch (_) {}
+        }
       }
     }
     _tunnelPort = 0;
@@ -1322,9 +1450,9 @@ echo "NO_METHOD"
       case ConnectionMode.remote:
         return _remoteBridge;
       case ConnectionMode.embedded:
-        return _embeddedBridge;
+        return _isMac ? _macEmbeddedBridge : _embeddedBridge;
       case ConnectionMode.local:
-        return _wslBridge;
+        return _isMac ? _macLocalBridge : _wslBridge;
     }
   }
 
