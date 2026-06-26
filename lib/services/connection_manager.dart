@@ -1263,8 +1263,24 @@ echo "NO_METHOD"
 
   /// 检测 WSL2 的 IP 地址（Windows 连 WSL2 需要这个而不是 localhost）
   Future<void> detectWslIp() async {
+    // 先验证当前配置的发行版是否可用，不可用则自动选择第一个
+    String distro = _wslDistro;
     try {
-      final r = await Process.run('wsl.exe', ['-d', _wslDistro, 'hostname', '-I']);
+      final validate = await Process.run('wsl.exe', ['-d', distro, 'hostname']);
+      if (validate.exitCode != 0) {
+        // 当前配置的分发版不可用，自动选择第一个可用的
+        final distros = await getWslDistros();
+        if (distros.isNotEmpty) {
+          distro = distros.first;
+          _wslDistro = distro;
+          _wslBridge.setDistro(distro);
+          debugPrint('[ConnectionManager] WSL distro "$_wslDistro" not available, switched to: $distro');
+        }
+      }
+    } catch (_) {}
+
+    try {
+      final r = await Process.run('wsl.exe', ['-d', distro, 'hostname', '-I']);
       if (r.exitCode == 0) {
         final out = (r.stdout is List<int>
             ? utf8.decode(r.stdout as List<int>, allowMalformed: true)
